@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { CONFIG } from '../src/config';
-import { collisionSolids, poleSolid, railSolid } from '../src/sim/layout';
+import { collisionSolids, poleSolid, railSolid, railSolids } from '../src/sim/layout';
 
 const world = CONFIG.world;
 const rail = CONFIG.visual.rail;
 
 describe('layout de colisão', () => {
   it('tudo que é visual e sólido vira AABB', () => {
-    expect(collisionSolids(world)).toHaveLength(world.boxes.length + world.rails.length + world.poles.length);
+    const railPieces = world.rails.reduce((n, r) => n + railSolids(r, world).length, 0);
+    expect(collisionSolids(world)).toHaveLength(world.boxes.length + railPieces + world.poles.length);
   });
 
   it('o corrimão inteiro (tubo, curvas e postes) cabe dentro da AABB fina', () => {
-    for (const r of world.rails) {
+    for (const r of world.rails.filter((rail) => rail.topEnd === undefined)) {
       const s = railSolid(r, world);
       const along = r.axis === 'x' ? s.sizeX : s.sizeZ;
       const across = r.axis === 'x' ? s.sizeZ : s.sizeX;

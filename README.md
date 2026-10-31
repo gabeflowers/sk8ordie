@@ -8,9 +8,8 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 - **Flip tricks, grabs, manuals, powerslide e revert**, com pontuação e multiplicador por variedade, como no Skate 3 (ver abaixo).
 - **Ollie e nollie.** Tem *coyote time* (ainda dá para pular logo depois de sair de uma borda) e *jump buffer* (o pulo apertado pouco antes de pousar vale).
 - **Giro no ar.** Pousa limpo de frente ou de costas; de costas, segue andando de **fakie**. Só cai quem pousa atravessado.
-- **Grind** nos corrimões e nas bordas dos caixotes, ledges e manual pads:
-  - shape alinhado ao trilho → **50-50**;
-  - shape atravessado → **boardslide**.
+- **Grind** nos corrimões (inclusive o inclinado da escadaria) e nas bordas dos caixotes, ledges e manual pads, com 10 variações: 50-50, 5-0, nosegrind, smith, feeble, crooked, boardslide, noseslide, tailslide e lipslide.
+- **Rampas** (kickers e bank) com chão inclinado de verdade: freiam na subida, aceleram na descida e lançam no lip.
 - **Tombo com física.** O corpo vira ragdoll e o shape solta do pé na direção do movimento; depois o skater levanta e o shape volta para o pé.
 - **Painel de tuning** (lil-gui, só em dev). Ajusta física, câmera, luz e animação ao vivo e copia os valores em JSON para colar no `src/config.ts`.
 
@@ -51,7 +50,17 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 
 **Powerslide:** **↓ + ←/→** em velocidade. Logo depois de pousar de costas (fakie), o mesmo comando faz um **revert** e volta a andar de frente.
 
-Para trilhar: dê ollie e caia sobre um corrimão ou sobre a borda de um obstáculo, chegando quase paralelo a ele.
+Para trilhar: dê ollie e caia sobre um corrimão ou sobre a borda de um obstáculo, chegando quase paralelo a ele. O tipo de grind depende do ângulo e das teclas seguradas na hora de encaixar:
+
+| Shape | Teclas no encaixe | Grind |
+|---|---|---|
+| alinhado | — / S / W | 50-50 / 5-0 / Nosegrind |
+| alinhado | S + A / S + D | Smith / Feeble |
+| alinhado | W + A ou W + D | Crooked |
+| atravessado | — / W / S | Boardslide / Noseslide / Tailslide |
+| atravessado | A ou D | Lipslide |
+
+O mapa tem **escadaria** com corrimão inclinado (sobe pelo bank, desce pelos degraus ou trilhando o corrimão), **kickers** que lançam no lip e banks de chão inclinado.
 
 ### Pontuação
 

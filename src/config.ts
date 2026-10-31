@@ -13,7 +13,7 @@ export interface SolidDef {
   height: number;
 }
 
-export type BoxKind = 'ledge' | 'pad' | 'crate';
+export type BoxKind = 'ledge' | 'pad' | 'crate' | 'step';
 
 /** Obstáculo skatável; `kind` só muda o visual. */
 export interface BoxDef extends SolidDef {
@@ -27,6 +27,22 @@ export interface RailDef {
   length: number;
   axis: 'x' | 'z';
   top: number;
+  /** altura do topo na ponta + do eixo (corrimão de escada); sem isso, reto */
+  topEnd?: number;
+}
+
+/**
+ * Rampa em cunha (kicker/bank): a altura sobe de 0 até `height` ao longo de `dir`;
+ * a ponta alta (lip) lança o skater.
+ */
+export interface RampDef {
+  x: number;
+  z: number;
+  /** largura (perpendicular a dir) e comprimento (ao longo de dir) */
+  width: number;
+  length: number;
+  height: number;
+  dir: 'x+' | 'x-' | 'z+' | 'z-';
 }
 
 /** Poste de luz; `armYaw` é a direção do braço da luminária (mesma convenção do yaw do skater). */
@@ -96,6 +112,13 @@ const POSES: Record<'base' | 'landing' | 'air' | 'grind' | 'push' | 'grab', Pose
   },
 };
 
+// escadaria: plataforma de 0,45 m, dois degraus descendo para +Z e um bank de acesso
+const STAIRS: BoxDef[] = [
+  { x: 30, z: 14, sizeX: 6, sizeZ: 6, height: 0.45, kind: 'pad' },
+  { x: 30, z: 17.35, sizeX: 6, sizeZ: 0.7, height: 0.3, kind: 'step' },
+  { x: 30, z: 18.05, sizeX: 6, sizeZ: 0.7, height: 0.15, kind: 'step' },
+];
+
 // Spawn em (0, 0, 0) olhando para +Z; a área em volta fica livre.
 const BOXES: BoxDef[] = [
   { x: 0, z: 16, sizeX: 2.5, sizeZ: 4, height: 0.3, kind: 'crate' },
@@ -107,11 +130,23 @@ const BOXES: BoxDef[] = [
   { x: 16, z: 12, sizeX: 4, sizeZ: 7, height: 0.35, kind: 'pad' },
   { x: -18, z: 34, sizeX: 0.6, sizeZ: 10, height: 0.55, kind: 'ledge' },
   { x: 0, z: -12, sizeX: 3, sizeZ: 3, height: 0.45, kind: 'crate' },
+  ...STAIRS,
 ];
 
 const RAILS: RailDef[] = [
   { x: -9, z: 34, length: 6, axis: 'z', top: 0.5 },
   { x: 14, z: 26, length: 6, axis: 'x', top: 0.45 },
+  // corrimão da escadaria: começa sobre a plataforma e desce até o chão
+  { x: 27.8, z: 18.1, length: 3.4, axis: 'z', top: 0.95, topEnd: 0.5 },
+];
+
+
+const RAMPS: RampDef[] = [
+  // bank que sobe até a plataforma da escadaria
+  { x: 30, z: 8, width: 6, length: 6, height: 0.45, dir: 'z+' },
+  // kickers
+  { x: 0, z: 30, width: 2.2, length: 1.6, height: 0.45, dir: 'z+' },
+  { x: -30, z: 15, width: 2.2, length: 1.6, height: 0.5, dir: 'z+' },
 ];
 
 // postes colidíveis: 2 sobre as ilhas (manual pads), 2 em áreas livres
@@ -152,6 +187,10 @@ export const CONFIG = {
     bailDecel: 6,
     skaterRadius: 0.3,
     stepTolerance: 0.05,
+    /** distância (m) para medir a inclinação do chão à frente e atrás do skater */
+    slopeProbe: 0.2,
+    /** quanto da subida da rampa vira impulso vertical no lip e no ollie */
+    rampLaunch: 1.4,
     spawnX: 0,
     spawnZ: 0,
     spawnYaw: 0,
@@ -267,8 +306,19 @@ export const CONFIG = {
       repeatFactor: 0.5,
       grindBasePoints: 150,
       grindPointsPerSecond: 250,
-      slideFactor: 1.2,
-      grindNames: { '5050': '50-50', boardslide: 'Boardslide' },
+      /** variações de grind: nome e multiplicador sobre a pontuação do grind */
+      grindVariants: {
+        '5050': { name: '50-50', factor: 1 },
+        fiveO: { name: '5-0', factor: 1.2 },
+        nosegrind: { name: 'Nosegrind', factor: 1.3 },
+        smith: { name: 'Smith', factor: 1.5 },
+        feeble: { name: 'Feeble', factor: 1.5 },
+        crooked: { name: 'Crooked', factor: 1.6 },
+        boardslide: { name: 'Boardslide', factor: 1.2 },
+        noseslide: { name: 'Noseslide', factor: 1.4 },
+        tailslide: { name: 'Tailslide', factor: 1.4 },
+        lipslide: { name: 'Lipslide', factor: 1.5 },
+      },
     },
   },
 
@@ -277,9 +327,14 @@ export const CONFIG = {
     boxes: BOXES,
     rails: RAILS,
     poles: POLES,
+    ramps: RAMPS,
+    /** numa rampa, o chão pode subir até isso acima do pé num passo (subir a cunha rápido) */
+    rampTolerance: 0.25,
     /** AABB do corrimão: largura e folga além do comprimento em cada ponta */
     railCollisionWidth: 0.06,
     railEndMargin: 0.025,
+    /** corrimão de escada: cada pedaço da colisão sobe no máximo isso (menor que stepTolerance) */
+    railPieceRise: 0.04,
     /** AABB do poste de luz */
     poleSize: 0.25,
     poleHeight: 6,
@@ -731,6 +786,25 @@ export const CONFIG = {
       manualDamping: 14,
       /** powerslide: o skater e o shape ficam de lado */
       powerslideDamping: 12,
+      /**
+       * Pose do shape em cada grind: inclinação (pitch, + = nose para baixo), rolagem, giro em Y,
+       * eixo de apoio ('rear'/'front' truck ou 'center') e deslocamento ao longo do shape.
+       */
+      grindPoses: {
+        '5050': { pitch: 0, roll: 0, yaw: 0, pivot: 'center', shift: 0 },
+        fiveO: { pitch: -0.22, roll: 0, yaw: 0, pivot: 'rear', shift: 0 },
+        nosegrind: { pitch: 0.22, roll: 0, yaw: 0, pivot: 'front', shift: 0 },
+        smith: { pitch: 0.25, roll: 0.35, yaw: 0, pivot: 'rear', shift: 0 },
+        feeble: { pitch: 0.2, roll: -0.35, yaw: 0, pivot: 'rear', shift: 0 },
+        crooked: { pitch: 0.2, roll: 0, yaw: 0.35, pivot: 'front', shift: 0 },
+        boardslide: { pitch: 0, roll: 0, yaw: 0, pivot: 'center', shift: 0 },
+        noseslide: { pitch: 0.12, roll: 0, yaw: 0, pivot: 'center', shift: -0.33 },
+        tailslide: { pitch: -0.12, roll: 0, yaw: 0, pivot: 'center', shift: 0.33 },
+        lipslide: { pitch: 0, roll: 0, yaw: 0, pivot: 'center', shift: 0 },
+      } as Record<string, { pitch: number; roll: number; yaw: number; pivot: 'rear' | 'front' | 'center'; shift: number }>,
+      grindPoseDamping: 16,
+      /** o corpo inclina junto com o chão (rampas, corrimão de escada) */
+      slopePitchDamping: 10,
     },
 
     /** HUD de pontuação */

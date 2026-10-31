@@ -14,9 +14,43 @@ export function railSolid(rail: RailDef, world: Pick<WorldConfig, 'railCollision
     z: rail.z,
     sizeX: rail.axis === 'x' ? along : across,
     sizeZ: rail.axis === 'z' ? along : across,
-    height: rail.top,
+    height: Math.max(rail.top, rail.topEnd ?? rail.top),
     walkable: false,
   };
+}
+
+/**
+ * Colisão do corrimão: reto = uma AABB; de escada = várias AABBs curtas em degrau, cada uma
+ * subindo no máximo `railPieceRise`, para o próprio trilho não virar parede durante o grind.
+ */
+export function railSolids(
+  rail: RailDef,
+  world: Pick<WorldConfig, 'railCollisionWidth' | 'railEndMargin' | 'railPieceRise'>,
+  railId?: number,
+): WorldSolid[] {
+  const end = rail.topEnd ?? rail.top;
+  const rise = Math.abs(end - rail.top);
+  if (rise <= world.railPieceRise) return [{ ...railSolid(rail, world), railId }];
+  const n = Math.ceil(rise / world.railPieceRise);
+  const along = rail.length + 2 * world.railEndMargin;
+  const piece = along / n;
+  const pieces: WorldSolid[] = [];
+  for (let i = 0; i < n; i++) {
+    const s0 = -along / 2 + i * piece;
+    const center = s0 + piece / 2;
+    const h0 = rail.top + ((end - rail.top) * (s0 + along / 2)) / along;
+    const h1 = rail.top + ((end - rail.top) * (s0 + piece + along / 2)) / along;
+    pieces.push({
+      x: rail.axis === 'x' ? rail.x + center : rail.x,
+      z: rail.axis === 'z' ? rail.z + center : rail.z,
+      sizeX: rail.axis === 'x' ? piece : world.railCollisionWidth,
+      sizeZ: rail.axis === 'z' ? piece : world.railCollisionWidth,
+      height: Math.max(h0, h1),
+      walkable: false,
+      railId,
+    });
+  }
+  return pieces;
 }
 
 export function poleSolid(pole: PoleDef, world: Pick<WorldConfig, 'poleSize' | 'poleHeight'>): SolidDef {
@@ -27,17 +61,20 @@ export function poleSolid(pole: PoleDef, world: Pick<WorldConfig, 'poleSize' | '
 export function collisionSolids(world: WorldConfig): WorldSolid[] {
   return [
     ...world.boxes,
-    ...world.rails.map((r) => railSolid(r, world)),
+    ...world.rails.flatMap((r, i) => railSolids(r, world, i)),
     ...world.poles.map((p) => poleSolid(p, world)),
   ];
 }
 
 /** Segmento de grind do corrimão: o eixo do tubo na altura do topo, com o comprimento do corrimão. */
-export function railGrindSegment(rail: RailDef): GrindRail {
+export function railGrindSegment(rail: RailDef, railId?: number): GrindRail {
   const half = rail.length / 2;
   const dx = rail.axis === 'x' ? half : 0;
   const dz = rail.axis === 'z' ? half : 0;
-  return { ax: rail.x - dx, az: rail.z - dz, bx: rail.x + dx, bz: rail.z + dz, y: rail.top, kind: 'rail' };
+  const seg: GrindRail = { ax: rail.x - dx, az: rail.z - dz, bx: rail.x + dx, bz: rail.z + dz, y: rail.top, kind: 'rail' };
+  if (rail.topEnd !== undefined) seg.by = rail.topEnd;
+  if (railId !== undefined) seg.railId = railId;
+  return seg;
 }
 
 /** As 4 arestas do topo de uma caixa (contorno fechado na altura do topo). */
@@ -57,10 +94,16 @@ export function boxGrindEdges(box: SolidDef): GrindRail[] {
 
 /** Tudo que dá para trilhar: corrimões e as arestas do topo dos obstáculos (crates, ledges, pads). */
 export function grindRails(world: Pick<WorldConfig, 'boxes' | 'rails'>): GrindRail[] {
-  return [...world.rails.map(railGrindSegment), ...world.boxes.flatMap(boxGrindEdges)];
+  return [...world.rails.map((r, i) => railGrindSegment(r, i)), ...world.boxes.flatMap(boxGrindEdges)];
 }
 
 /** Definição completa do World a partir do config: `new World(worldDef(CONFIG.world))`. */
 export function worldDef(world: WorldConfig): WorldDef {
-  return { size: world.size, boxes: collisionSolids(world), grindRails: grindRails(world) };
+  return {
+    size: world.size,
+    boxes: collisionSolids(world),
+    grindRails: grindRails(world),
+    ramps: world.ramps,
+    rampTolerance: world.rampTolerance,
+  };
 }

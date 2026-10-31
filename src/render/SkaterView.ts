@@ -1,5 +1,6 @@
 import {
   BoxGeometry,
+  Euler,
   CylinderGeometry,
   Group,
   MathUtils,
@@ -177,6 +178,10 @@ export class SkaterView {
   private readonly elbowPoleB = new Vector3();
   private manualTilt = 0;
   private slideYaw = 0;
+  private slopePitch = 0;
+  /** pose atual do shape no grind (amortecida entre as variações) */
+  private readonly grindPose = { pitch: 0, roll: 0, yaw: 0, shift: 0, pivotZ: 0 };
+  private readonly grindEuler = new Euler(0, 0, 0, 'YXZ');
 
   private readonly sparkDir = new Vector3();
   /** Quanto o shape desce no grind para os trucks (50-50) ou o meio do shape (boardslide) tocarem o trilho. */
@@ -311,6 +316,8 @@ export class SkaterView {
     const deckTop = 2 * w.radius + b.truckHeight + b.thickness;
     this.bodyPivot.position.y = deckTop;
     this.root.add(this.boardLean, this.bodyPivot);
+    // yaw primeiro, depois a inclinação da rampa no eixo do próprio shape
+    this.root.rotation.order = 'YXZ';
 
     this.drop5050 = 2 * w.radius;
     this.dropBoardslide = 2 * w.radius + b.truckHeight;
@@ -349,6 +356,7 @@ export class SkaterView {
     this.lastGrab = null;
     this.manualTilt = 0;
     this.slideYaw = 0;
+    this.slopePitch = 0;
     this.sparks.clear();
   }
 
@@ -382,6 +390,12 @@ export class SkaterView {
       dt,
     );
     this.root.rotation.y = this.renderYaw + this.yawOffset + this.slideYaw;
+
+    // rampa / corrimão de escada: o skater inclina junto com o chão, no sentido do shape
+    let noseSlope = 0;
+    if (sim.speed > EPSILON) noseSlope = sim.groundSlope * Math.cos(wrapAngle(Math.atan2(sim.velocity.x, sim.velocity.z) - sim.yaw));
+    this.slopePitch = MathUtils.damp(this.slopePitch, Math.atan(noseSlope), vt0.slopePitchDamping, dt);
+    this.root.rotation.x = -this.slopePitch;
 
     if (sim.ollieCount !== this.seenOllies) {
       this.seenOllies = sim.ollieCount;
@@ -516,6 +530,7 @@ export class SkaterView {
     if (!trick) {
       this.flipEnv = 0;
       this.attachBoard();
+      this.applyGrindPose(sim);
       this.applyManualAndGrab();
       return;
     }
@@ -565,6 +580,33 @@ export class SkaterView {
       this.deck.quaternion.copy(this.flipQuat);
     }
     this.deck.position.y += vt.grabBoardLift * this.grabEnv;
+  }
+
+  /** Pose do shape em cada variação de grind: inclina/rola/gira em torno do truck de apoio. */
+  private applyGrindPose(sim: SkaterSim): void {
+    const vt = this.visual.tricks;
+    const gp = this.grindPose;
+    const dt = this.frameDt;
+    const target = sim.state === 'GRINDING' && sim.grindVariant ? vt.grindPoses[sim.grindVariant] : undefined;
+    const k = vt.grindPoseDamping;
+    gp.pitch = MathUtils.damp(gp.pitch, target?.pitch ?? 0, k, dt);
+    gp.roll = MathUtils.damp(gp.roll, target?.roll ?? 0, k, dt);
+    gp.yaw = MathUtils.damp(gp.yaw, target?.yaw ?? 0, k, dt);
+    gp.shift = MathUtils.damp(gp.shift, target?.shift ?? 0, k, dt);
+    if (target) {
+      const axle = this.visual.wheels.axleOffset;
+      gp.pivotZ = MathUtils.damp(gp.pivotZ, target.pivot === 'rear' ? -axle : target.pivot === 'front' ? axle : 0, k, dt);
+    }
+    if (Math.abs(gp.pitch) + Math.abs(gp.roll) + Math.abs(gp.yaw) + Math.abs(gp.shift) < EPSILON) return;
+
+    this.flipQuat.setFromEuler(this.grindEuler.set(gp.pitch, gp.yaw, gp.roll, 'YXZ'));
+    this.flipCenter.set(0, 0, gp.pivotZ);
+    this.deck.position
+      .copy(this.deckAttached)
+      .add(this.flipCenter)
+      .sub(tmp.copy(this.flipCenter).applyQuaternion(this.flipQuat));
+    this.deck.position.z += gp.shift;
+    this.deck.quaternion.copy(this.flipQuat);
   }
 
   /** Ponto do shape que a mão do grab alcança (espaço do bodyPivot) e qual mão. */

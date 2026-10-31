@@ -1,7 +1,7 @@
 import type { Vector3 } from 'three';
 import type { SimConfig } from '../config';
 import { EPSILON, horizontalSpeed, wrapAngle } from './math';
-import type { GrindRail, GrindType } from './types';
+import type { GrindRail, GrindType, GrindVariant } from './types';
 
 const HALF_PI = Math.PI / 2;
 
@@ -16,6 +16,29 @@ export interface GrindSegment {
   length: number;
   tx: number;
   tz: number;
+  /** inclinação (dy por metro horizontal, de a para b); 0 em trilho reto */
+  grade: number;
+}
+
+/** Altura do trilho a `s` metros (horizontais) da ponta a. */
+export function railHeightAt(seg: GrindSegment, s: number): number {
+  return seg.rail.y + seg.grade * s;
+}
+
+/**
+ * Variação do grind: alinhado = trucks (50-50, 5-0 com S, nosegrind com W, smith/feeble com
+ * S+A/S+D, crooked com W+A/W+D); atravessado = slide (boardslide, noseslide com W, tailslide
+ * com S, lipslide com A/D).
+ */
+export function grindVariant(type: GrindType, tilt: number, side: number): GrindVariant {
+  if (type === '5050') {
+    if (tilt < 0) return side < 0 ? 'smith' : side > 0 ? 'feeble' : 'fiveO';
+    if (tilt > 0) return side !== 0 ? 'crooked' : 'nosegrind';
+    return '5050';
+  }
+  if (tilt > 0) return 'noseslide';
+  if (tilt < 0) return 'tailslide';
+  return side !== 0 ? 'lipslide' : 'boardslide';
 }
 
 /** Pré-calcula o referencial; null para segmento degenerado (comprimento ~0). */
@@ -24,7 +47,7 @@ export function toGrindSegment(rail: GrindRail): GrindSegment | null {
   const dz = rail.bz - rail.az;
   const length = Math.hypot(dx, dz);
   if (length <= EPSILON) return null;
-  return { rail, length, tx: dx / length, tz: dz / length };
+  return { rail, length, tx: dx / length, tz: dz / length, grade: ((rail.by ?? rail.y) - rail.y) / length };
 }
 
 /** Ângulo entre o shape (uma linha: yaw módulo π) e uma direção do segmento, em [0, π/2]. */
@@ -57,8 +80,9 @@ export function lockedGrindYaw(yaw: number, railHeading: number, type: GrindType
 export interface GrindSnap {
   segment: GrindSegment;
   type: GrindType;
-  /** ponto do segmento mais próximo do centro do skater (XZ) */
+  /** ponto do segmento mais próximo do centro do skater (XZ) e a altura do trilho ali */
   x: number;
+  y: number;
   z: number;
   /** tangente unitária no sentido do movimento */
   dirX: number;
@@ -95,12 +119,13 @@ export function findGrindSnap(
 
   for (const seg of segments) {
     const r = seg.rail;
-    if (footHi < r.y - cfg.grindSnapBelow || footLo > r.y + cfg.grindSnapAbove) continue;
-
     const rx = pos.x - r.ax;
     const rz = pos.z - r.az;
     const s = rx * seg.tx + rz * seg.tz;
     if (s < 0 || s > seg.length) continue; // fora das pontas
+
+    const h = railHeightAt(seg, s);
+    if (footHi < h - cfg.grindSnapBelow || footLo > h + cfg.grindSnapAbove) continue;
 
     const dist = Math.abs(rx * seg.tz - rz * seg.tx);
     if (dist > cfg.grindSnapDistance || dist >= bestDist) continue;
@@ -115,7 +140,7 @@ export function findGrindSnap(
     if (type === null) continue;
 
     bestDist = dist;
-    best = { segment: seg, type, x: r.ax + seg.tx * s, z: r.az + seg.tz * s, dirX, dirZ, speed: Math.abs(along) };
+    best = { segment: seg, type, x: r.ax + seg.tx * s, y: h, z: r.az + seg.tz * s, dirX, dirZ, speed: Math.abs(along) };
   }
 
   return best;

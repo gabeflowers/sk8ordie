@@ -1,6 +1,7 @@
 import { MathUtils, type Vector3 } from 'three';
 import { toGrindSegment, type GrindSegment } from './grind';
 import { EPSILON } from './math';
+import type { RampDef } from '../config';
 import type { Aabb, GrindRail, WorldSolid } from './types';
 
 export interface WorldDef {
@@ -8,6 +9,45 @@ export interface WorldDef {
   boxes: readonly WorldSolid[];
   /** Segmentos trilháveis (ver `grindRails` em layout.ts). Sem eles não há grind. */
   grindRails?: readonly GrindRail[];
+  /** Rampas em cunha (kicker/bank). */
+  ramps?: readonly RampDef[];
+  /** numa rampa, o chão pode subir até isso acima de maxTop (subir a cunha rápido) */
+  rampTolerance?: number;
+}
+
+/** Rampa pré-calculada: pegada AABB, altura máxima e o eixo/sentido em que sobe. */
+export interface Ramp {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  height: number;
+  axis: 'x' | 'z';
+  sign: 1 | -1;
+}
+
+function toRamp(r: RampDef): Ramp {
+  const alongX = r.dir.startsWith('x');
+  const sx = alongX ? r.length : r.width;
+  const sz = alongX ? r.width : r.length;
+  return {
+    minX: r.x - sx / 2,
+    maxX: r.x + sx / 2,
+    minZ: r.z - sz / 2,
+    maxZ: r.z + sz / 2,
+    height: r.height,
+    axis: alongX ? 'x' : 'z',
+    sign: r.dir.endsWith('+') ? 1 : -1,
+  };
+}
+
+/** Altura da superfície da rampa em (x, z) (fora da pegada, extrapola presa às bordas). */
+export function rampHeightAt(r: Ramp, x: number, z: number): number {
+  const lo = r.axis === 'x' ? r.minX : r.minZ;
+  const hi = r.axis === 'x' ? r.maxX : r.maxZ;
+  const p = r.axis === 'x' ? x : z;
+  const t = MathUtils.clamp((p - lo) / (hi - lo), 0, 1);
+  return r.height * (r.sign > 0 ? t : 1 - t);
 }
 
 function toAabb(b: WorldSolid): Aabb {
@@ -18,6 +58,7 @@ function toAabb(b: WorldSolid): Aabb {
     maxZ: b.z + b.sizeZ / 2,
     top: b.height,
     walkable: b.walkable ?? true,
+    railId: b.railId,
   };
 }
 
@@ -26,9 +67,13 @@ export class World {
   readonly boxes: readonly Aabb[];
   readonly grindSegments: readonly GrindSegment[];
   readonly halfSize: number;
+  readonly ramps: readonly Ramp[];
+  readonly rampTolerance: number;
 
   constructor(def: WorldDef) {
     this.boxes = def.boxes.map(toAabb);
+    this.ramps = (def.ramps ?? []).map(toRamp);
+    this.rampTolerance = def.rampTolerance ?? 0;
     this.grindSegments = (def.grindRails ?? []).flatMap((r) => toGrindSegment(r) ?? []);
     this.halfSize = def.size / 2;
   }
@@ -44,6 +89,12 @@ export class World {
       if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
       if (b.top <= maxTop && b.top > h) h = b.top;
     }
+    // rampas: a superfície inclinada conta como chão (com folga para subir rápido)
+    for (const r of this.ramps) {
+      if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
+      const rh = rampHeightAt(r, x, z);
+      if (rh <= maxTop + this.rampTolerance && rh > h) h = rh;
+    }
     return h;
   }
 
@@ -51,17 +102,39 @@ export class World {
    * Empurra o círculo (raio no plano XZ) para fora das caixas com top > minWallTop.
    * Retorna true se houve contato; `outNormal` recebe a normal média (unitária, XZ).
    */
-  resolveCircleCollisions(pos: Vector3, radius: number, minWallTop: number, outNormal: Vector3): boolean {
+  resolveCircleCollisions(pos: Vector3, radius: number, minWallTop: number, outNormal: Vector3, ignoreRail?: number): boolean {
     let hit = false;
     outNormal.set(0, 0, 0);
 
     for (const b of this.boxes) {
       if (b.top <= minWallTop) continue;
+      if (ignoreRail !== undefined && b.railId === ignoreRail) continue;
+      if (this.pushOut(pos, radius, b, outNormal)) hit = true;
+    }
 
+    // rampa só é parede onde a superfície está bem acima do pé (lateral alta, ponta do lip)
+    for (const r of this.ramps) {
+      const cx = MathUtils.clamp(pos.x, r.minX, r.maxX);
+      const cz = MathUtils.clamp(pos.z, r.minZ, r.maxZ);
+      if (rampHeightAt(r, cx, cz) <= minWallTop + this.rampTolerance) continue;
+      if (this.pushOut(pos, radius, r, outNormal)) hit = true;
+    }
+
+    if (hit && outNormal.lengthSq() > EPSILON) outNormal.normalize();
+    return hit;
+  }
+
+  /** Empurra o círculo para fora de uma pegada AABB; soma a normal em `outNormal`. */
+  private pushOut(
+    pos: Vector3,
+    radius: number,
+    b: { minX: number; maxX: number; minZ: number; maxZ: number },
+    outNormal: Vector3,
+  ): boolean {
       const dx = pos.x - MathUtils.clamp(pos.x, b.minX, b.maxX);
       const dz = pos.z - MathUtils.clamp(pos.z, b.minZ, b.maxZ);
       const d2 = dx * dx + dz * dz;
-      if (d2 >= radius * radius) continue;
+      if (d2 >= radius * radius) return false;
 
       let nx: number;
       let nz: number;
@@ -90,11 +163,7 @@ export class World {
       pos.z += nz * push;
       outNormal.x += nx;
       outNormal.z += nz;
-      hit = true;
-    }
-
-    if (hit && outNormal.lengthSq() > EPSILON) outNormal.normalize();
-    return hit;
+      return true;
   }
 
   /** Mantém o círculo dentro do mapa e zera a velocidade no eixo que bateu. */

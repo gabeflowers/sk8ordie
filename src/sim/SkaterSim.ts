@@ -1,11 +1,11 @@
 import { MathUtils, Vector3 } from 'three';
 import type { SimConfig } from '../config';
-import { findGrindSnap, lockedGrindYaw, type GrindSegment, type GrindSnap } from './grind';
+import { findGrindSnap, grindVariant, lockedGrindYaw, railHeightAt, type GrindSegment, type GrindSnap } from './grind';
 import { resolveLanding } from './landing';
 import { EPSILON, forwardFromYaw, headingOf, horizontalSpeed, wrapAngle } from './math';
 import { Score } from './score';
 import { resolveGrab, type GrabId, type PopIntent, type TrickId } from './tricks/gesture';
-import type { GrindRail, GrindType, InputState, SkaterState } from './types';
+import type { GrindRail, GrindType, GrindVariant, InputState, SkaterState } from './types';
 import type { World } from './World';
 
 function turnAxis(input: InputState): number {
@@ -42,6 +42,10 @@ export class SkaterSim {
 
   /** Manobra atual; null fora de GRINDING. */
   grindType: GrindType | null = null;
+  /** Variação escolhida no encaixe (5-0, smith, noseslide...); null fora de GRINDING. */
+  grindVariant: GrindVariant | null = null;
+  /** Inclinação do chão (ou do trilho) no sentido em que o skater anda: dy por metro. */
+  groundSlope = 0;
   /** Tangente unitária do trilho no sentido do movimento; (0, 0, 0) fora de GRINDING. */
   readonly grindDir = new Vector3();
 
@@ -77,6 +81,8 @@ export class SkaterSim {
   private revertTimer = 0;
   private slideLock = false;
   private lastTilt = 0;
+  private lastSide = 0;
+  private readonly probe = new Vector3();
 
   private grindSegment: GrindSegment | null = null;
   private readonly forward = new Vector3();
@@ -212,6 +218,9 @@ export class SkaterSim {
     const turnScale = this.powerslide ? 0 : this.manual ? tc.manual.turnFactor : 1;
     this.yaw += turn * MathUtils.lerp(c.turnRateSlow, c.turnRateFast, speedT) * dt * turnScale;
 
+    // rampa: a gravidade freia na subida e acelera na descida
+    speed = Math.max(0, speed - c.gravity * (this.groundSlope / Math.hypot(1, this.groundSlope)) * dt);
+
     // friction antes do push: segurar ↑ estabiliza exatamente em maxPushSpeed
     speed = Math.max(0, speed - c.rollingFriction * dt);
     if (this.powerslide) {
@@ -242,16 +251,34 @@ export class SkaterSim {
     const footY = this.position.y;
     const groundY = this.world.groundHeightAt(this.position.x, this.position.z, footY + c.stepTolerance);
     if (groundY < footY - c.stepTolerance) {
-      // o chão sumiu: saiu de uma borda
+      // o chão sumiu: saiu de uma borda (ou passou pelo lip da rampa e é lançado)
       this.state = 'AIRBORNE';
-      this.velocity.y = 0;
+      this.velocity.y = Math.max(0, this.speed * this.groundSlope * c.rampLaunch);
+      this.groundSlope = 0;
       this.coyoteTimer = c.coyoteTime;
       this.endManual(true);
       this.endPowerslide(false);
       this.resetAir(false);
     } else {
       this.position.y = groundY;
+      this.groundSlope = this.measureSlope();
     }
+  }
+
+  /**
+   * Inclinação do chão no sentido em que anda, medida para trás (o trecho que acabou de rodar):
+   * no lip da rampa a sonda à frente cairia do outro lado.
+   */
+  private measureSlope(): number {
+    const c = this.cfg;
+    const d = c.slopeProbe;
+    forwardFromYaw(this.travelYaw, this.forward);
+    this.probe.copy(this.position).addScaledVector(this.forward, -d);
+    const behind = this.world.groundHeightAt(this.probe.x, this.probe.z, this.position.y + c.stepTolerance);
+    const rise = this.position.y - behind;
+    // degraus (caixas) não são rampa: só conta se a diferença é contínua
+    if (Math.abs(rise) > d) return 0;
+    return rise / d;
   }
 
   // ---------------------------------------------------------------- AIRBORNE
@@ -259,6 +286,8 @@ export class SkaterSim {
   private stepAirborne(input: InputState, dt: number): void {
     const turn = turnAxis(input);
     this.lastTilt = input.tilt ?? 0;
+    this.lastSide = input.side ?? 0;
+    this.groundSlope = 0;
     this.turnInput = turn;
 
     // gira no próprio eixo; a trajetória não muda
@@ -335,7 +364,10 @@ export class SkaterSim {
     const pop = this.pendingPop;
     this.pendingPop = null;
     // agachar mais = pop mais alto (sem dados de pop, altura máxima)
-    this.velocity.y = this.cfg.ollieVelocity * MathUtils.lerp(t.minPopFactor, 1, pop ? pop.charge : 1);
+    // na rampa, a subida soma ao pop
+    const rampLift = this.state === 'GROUNDED' ? Math.max(0, this.speed * this.groundSlope * this.cfg.rampLaunch) : 0;
+    this.velocity.y = this.cfg.ollieVelocity * MathUtils.lerp(t.minPopFactor, 1, pop ? pop.charge : 1) + rampLift;
+    this.groundSlope = 0;
     this.state = 'AIRBORNE';
     this.jumpBufferTimer = 0;
     this.coyoteTimer = 0;
@@ -487,7 +519,8 @@ export class SkaterSim {
     this.grindSegment = snap.segment;
     this.grindType = snap.type;
     this.grindDir.set(snap.dirX, 0, snap.dirZ);
-    this.position.set(snap.x, snap.segment.rail.y, snap.z);
+    this.position.set(snap.x, snap.y, snap.z);
+    this.grindVariant = grindVariant(snap.type, this.lastTilt, this.lastSide);
     this.velocity.set(snap.dirX * snap.speed, 0, snap.dirZ * snap.speed);
     this.yaw = lockedGrindYaw(this.yaw, headingOf(this.grindDir), snap.type);
     this.coyoteTimer = 0;
@@ -521,14 +554,18 @@ export class SkaterSim {
       return;
     }
 
+    // corrimão inclinado: a gravidade acelera na descida (e freia na subida)
+    const slope = seg.grade * (dir.x * seg.tx + dir.z * seg.tz);
+    this.groundSlope = slope;
+    speed = Math.max(0, speed - c.gravity * (slope / Math.hypot(1, slope)) * dt);
     speed = Math.max(0, speed - c.grindFriction * dt);
     this.velocity.set(dir.x * speed, 0, dir.z * speed);
     this.position.addScaledVector(this.velocity, dt);
 
-    // reprojeta na linha do segmento: sem deriva lateral nem vertical
+    // reprojeta na linha do segmento: sem deriva lateral; a altura acompanha o trilho
     const r = seg.rail;
     const s = (this.position.x - r.ax) * seg.tx + (this.position.z - r.az) * seg.tz;
-    this.position.set(r.ax + seg.tx * s, r.y, r.az + seg.tz * s);
+    this.position.set(r.ax + seg.tx * s, railHeightAt(seg, Math.min(Math.max(s, 0), seg.length)), r.az + seg.tz * s);
 
     if (s < 0 || s > seg.length) {
       // passou da ponta: segue reto e começa a cair, com coyote para um ollie tardio
@@ -545,13 +582,14 @@ export class SkaterSim {
   /** Sai do trilho para AIRBORNE com vy = 0 (quem chama decide coyote/ollie). */
   private leaveGrind(): void {
     const sc = this.cfg.score;
-    if (this.grindType) {
-      const slide = this.grindType === 'boardslide';
-      const points = (sc.grindBasePoints + sc.grindPointsPerSecond * this.grindTime) * (slide ? sc.slideFactor : 1);
-      this.score.add(sc.grindNames[this.grindType], points);
+    if (this.grindVariant) {
+      const v = sc.grindVariants[this.grindVariant];
+      this.score.add(v.name, (sc.grindBasePoints + sc.grindPointsPerSecond * this.grindTime) * v.factor);
     }
     this.state = 'AIRBORNE';
-    this.velocity.y = 0;
+    // descendo um corrimão de escada, sai já caindo junto com ele
+    this.velocity.y = Math.min(0, this.speed * this.groundSlope);
+    this.groundSlope = 0;
     // arcade: o shape volta para o eixo do movimento, então o pouso é limpo. O boardslide sai
     // de frente; o 50-50 mantém o sentido em que entrou (de costas continua fakie).
     if (this.speed > EPSILON) {
@@ -565,6 +603,7 @@ export class SkaterSim {
   private clearGrind(): void {
     this.grindSegment = null;
     this.grindType = null;
+    this.grindVariant = null;
     this.grindDir.set(0, 0, 0);
   }
 
@@ -643,7 +682,9 @@ export class SkaterSim {
   private collideSides(): boolean {
     const c = this.cfg;
     const minWallTop = this.position.y + c.stepTolerance;
-    if (!this.world.resolveCircleCollisions(this.position, c.skaterRadius, minWallTop, this.hitNormal)) return false;
+    // trilhando um corrimão, a colisão dele mesmo não conta
+    const ignore = this.state === 'GRINDING' ? this.grindSegment?.rail.railId : undefined;
+    if (!this.world.resolveCircleCollisions(this.position, c.skaterRadius, minWallTop, this.hitNormal, ignore)) return false;
 
     // componente da velocidade contra a parede
     const impact = -(this.velocity.x * this.hitNormal.x + this.velocity.z * this.hitNormal.z);

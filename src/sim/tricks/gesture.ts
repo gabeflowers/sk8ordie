@@ -133,6 +133,11 @@ export class TrickGesture {
     return t;
   }
 
+  /** D segurado = +1, A segurado = −1 (variação do grind). */
+  get side(): number {
+    return (this.held.has('D') ? 1 : 0) - (this.held.has('A') ? 1 : 0);
+  }
+
   /** W segurado = +1, S segurado = −1 (manual, grabs). */
   get tilt(): number {
     return (this.held.has('W') ? 1 : 0) - (this.held.has('S') ? 1 : 0);

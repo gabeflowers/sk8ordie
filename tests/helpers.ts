@@ -1,4 +1,4 @@
-import { CONFIG, type BoxDef, type PoleDef, type RailDef, type SimConfig, type SolidDef } from '../src/config';
+import { CONFIG, type BoxDef, type PoleDef, type RailDef, type RampDef, type SimConfig, type SolidDef } from '../src/config';
 import { worldDef } from '../src/sim/layout';
 import { SkaterSim } from '../src/sim/SkaterSim';
 import type { InputState } from '../src/sim/types';
@@ -22,11 +22,12 @@ export interface TestLayout {
   boxes?: BoxDef[];
   rails?: RailDef[];
   poles?: PoleDef[];
+  ramps?: RampDef[];
 }
 
 /** Sim num mundo montado como no jogo (colisão + segmentos de grind), só com os obstáculos dados. */
 export function makeLayoutSim(layout: TestLayout, overrides: Partial<SimConfig> = {}): SkaterSim {
-  const world = { ...CONFIG.world, boxes: layout.boxes ?? [], rails: layout.rails ?? [], poles: layout.poles ?? [] };
+  const world = { ...CONFIG.world, boxes: layout.boxes ?? [], rails: layout.rails ?? [], poles: layout.poles ?? [], ramps: layout.ramps ?? [] };
   return new SkaterSim(new World(worldDef(world)), makeConfig(overrides));
 }
 

@@ -53,6 +53,7 @@ export class Input {
       lateTrick: this.gesture.consumeLate(),
       tap: this.gesture.consumeTap(),
       tilt: this.gesture.tilt,
+      side: this.gesture.side,
       grab: this.held.has('KeyJ') ? 'front' : this.held.has('KeyL') ? 'back' : null,
     };
   }
