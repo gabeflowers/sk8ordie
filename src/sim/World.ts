@@ -27,13 +27,15 @@ export interface Ramp {
   height: number;
   axis: 'x' | 'z';
   sign: 1 | -1;
-  quarter: boolean;
+  shape: 'flat' | 'quarter' | 'roll';
+  /** quarter: seno da inclinação no topo (o perfil é um arco de círculo) */
+  maxSin: number;
+  /** quarter: sair pelo coping dá air vertical */
+  vert: boolean;
 }
 
-/** Parâmetro da transição curva: seno do ângulo máximo (o perfil é um arco de círculo). */
-let quarterSin = Math.sin((68 * Math.PI) / 180);
-
-function toRamp(r: RampDef): Ramp {
+/** Pré-calcula a rampa; `defaultMaxAngle` vale para quarter pipes sem maxAngle próprio. */
+export function rampFromDef(r: RampDef, defaultMaxAngle = (68 * Math.PI) / 180): Ramp {
   const alongX = r.dir.startsWith('x');
   const sx = alongX ? r.length : r.width;
   const sz = alongX ? r.width : r.length;
@@ -45,7 +47,9 @@ function toRamp(r: RampDef): Ramp {
     height: r.height,
     axis: alongX ? 'x' : 'z',
     sign: r.dir.endsWith('+') ? 1 : -1,
-    quarter: r.profile === 'quarter',
+    shape: r.profile ?? 'flat',
+    maxSin: Math.sin(r.maxAngle ?? defaultMaxAngle),
+    vert: r.vert ?? true,
   };
 }
 
@@ -59,9 +63,11 @@ export function rampHeightAt(r: Ramp, x: number, z: number): number {
   return r.height * rampProfile(r, u);
 }
 
-/** Perfil normalizado (0..1) ao longo da rampa: reto, ou arco de círculo no quarter pipe. */
-export function rampProfile(r: Pick<Ramp, 'quarter'>, u: number): number {
-  return r.quarter ? quarterCurve(u, quarterSin) : u;
+/** Perfil normalizado (0..1) ao longo da rampa: reto, arco de círculo ou S suave. */
+export function rampProfile(r: Pick<Ramp, 'shape' | 'maxSin'>, u: number): number {
+  if (r.shape === 'quarter') return quarterCurve(u, r.maxSin);
+  if (r.shape === 'roll') return (1 - Math.cos(Math.PI * u)) / 2;
+  return u;
 }
 
 /** Arco de círculo normalizado (0..1) que termina com inclinação de asin(`maxSin`). */
@@ -91,10 +97,9 @@ export class World {
   readonly quarterTolerance: number;
 
   constructor(def: WorldDef) {
-    if (def.quarterMaxAngle !== undefined) quarterSin = Math.sin(def.quarterMaxAngle);
     this.quarterTolerance = def.quarterTolerance ?? 0;
     this.boxes = def.boxes.map(toAabb);
-    this.ramps = (def.ramps ?? []).map(toRamp);
+    this.ramps = (def.ramps ?? []).map((r) => rampFromDef(r, def.quarterMaxAngle));
     this.rampTolerance = def.rampTolerance ?? 0;
     this.grindSegments = (def.grindRails ?? []).flatMap((r) => toGrindSegment(r) ?? []);
     this.halfSize = def.size / 2;
@@ -115,7 +120,7 @@ export class World {
     for (const r of this.ramps) {
       if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
       const rh = rampHeightAt(r, x, z);
-      if (rh <= maxTop + (r.quarter ? this.quarterTolerance : this.rampTolerance) && rh > h) h = rh;
+      if (rh <= maxTop + this.toleranceOf(r) && rh > h) h = rh;
     }
     return h;
   }
@@ -138,7 +143,7 @@ export class World {
     for (const r of this.ramps) {
       const cx = MathUtils.clamp(pos.x, r.minX, r.maxX);
       const cz = MathUtils.clamp(pos.z, r.minZ, r.maxZ);
-      if (rampHeightAt(r, cx, cz) <= minWallTop + (r.quarter ? this.quarterTolerance : this.rampTolerance)) continue;
+      if (rampHeightAt(r, cx, cz) <= minWallTop + this.toleranceOf(r)) continue;
       if (this.pushOut(pos, radius, r, outNormal)) hit = true;
     }
 
@@ -188,10 +193,27 @@ export class World {
       return true;
   }
 
-  /** Quarter pipe sob o ponto (se houver). */
+  private toleranceOf(r: Ramp): number {
+    return r.shape === 'quarter' ? this.quarterTolerance : this.rampTolerance;
+  }
+
+  /**
+   * Das rampas sob (x, z), a maior altura da superfície em (ax, az), presa ao lip se passar dele
+   * (0 fora das rampas).
+   */
+  rampSurfaceAhead(x: number, z: number, ax: number, az: number): number {
+    let h = 0;
+    for (const r of this.ramps) {
+      if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
+      h = Math.max(h, rampHeightAt(r, ax, az));
+    }
+    return h;
+  }
+
+  /** Transição curva (quarter pipe, spine) sob o ponto (se houver). */
   quarterAt(x: number, z: number): Ramp | null {
     for (const r of this.ramps) {
-      if (r.quarter && x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ) return r;
+      if (r.shape === 'quarter' && x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ) return r;
     }
     return null;
   }

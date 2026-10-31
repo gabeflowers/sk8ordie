@@ -43,8 +43,18 @@ export interface RampDef {
   length: number;
   height: number;
   dir: 'x+' | 'x-' | 'z+' | 'z-';
-  /** 'quarter' = transição curva (quarter pipe): airs quase verticais que voltam para a rampa */
-  profile?: 'flat' | 'quarter';
+  /**
+   * 'flat' = cunha (kicker, bank). 'quarter' = transição curva em arco de círculo (quarter pipe,
+   * half pipe, spine). 'roll' = curva suave em S, sem quina no pé nem no topo (roller, hump).
+   */
+  profile?: 'flat' | 'quarter' | 'roll';
+  /** quarter: inclinação no topo (padrão world.quarterMaxAngle) */
+  maxAngle?: number;
+  /**
+   * quarter: sair pelo coping dá air vertical que volta para a transição (padrão true). No spine
+   * é false: passa por cima e desce do outro lado.
+   */
+  vert?: boolean;
 }
 
 /** Poste de luz; `armYaw` é a direção do braço da luminária (mesma convenção do yaw do skater). */
@@ -126,6 +136,16 @@ const STAIRS: BoxDef[] = [
   { x: 30, z: 18.05, sizeX: 6, sizeZ: 0.7, height: 0.15, kind: 'step' },
 ];
 
+// decks: plataformas atrás do coping (mini-rampa, half pipe) e o topo do hump e do funbox
+const DECKS: BoxDef[] = [
+  { x: -35, z: -42.4, sizeX: 7, sizeZ: 2, height: 1.5, kind: 'pad' },
+  { x: -35, z: -23.6, sizeX: 7, sizeZ: 2, height: 1.5, kind: 'pad' },
+  { x: 35, z: -46.2, sizeX: 8, sizeZ: 2, height: 2, kind: 'pad' },
+  { x: 35, z: -29.8, sizeX: 8, sizeZ: 2, height: 2, kind: 'pad' },
+  { x: 48, z: -37.5, sizeX: 5, sizeZ: 3, height: 0.6, kind: 'pad' },
+  { x: -45, z: 38, sizeX: 4, sizeZ: 4, height: 0.5, kind: 'pad' },
+];
+
 // Spawn em (0, 0, 0) olhando para +Z; a área em volta fica livre.
 const BOXES: BoxDef[] = [
   { x: 0, z: 16, sizeX: 2.5, sizeZ: 4, height: 0.3, kind: 'crate' },
@@ -138,6 +158,7 @@ const BOXES: BoxDef[] = [
   { x: -18, z: 34, sizeX: 0.6, sizeZ: 10, height: 0.55, kind: 'ledge' },
   { x: 0, z: -12, sizeX: 3, sizeZ: 3, height: 0.45, kind: 'crate' },
   ...STAIRS,
+  ...DECKS,
 ];
 
 const RAILS: RailDef[] = [
@@ -145,6 +166,8 @@ const RAILS: RailDef[] = [
   { x: 14, z: 26, length: 6, axis: 'x', top: 0.45 },
   // corrimão da escadaria: começa sobre a plataforma e desce até o chão
   { x: 27.8, z: 18.1, length: 3.4, axis: 'z', top: 0.95, topEnd: 0.5 },
+  // corrimão em cima do funbox
+  { x: -46.2, z: 38, length: 3.6, axis: 'z', top: 0.85 },
 ];
 
 
@@ -157,6 +180,21 @@ const RAMPS: RampDef[] = [
   // mini-rampa: dois quarter pipes frente a frente com 8 m de chão entre eles
   { x: -35, z: -40.2, width: 7, length: 2.4, height: 1.5, dir: 'z-', profile: 'quarter' },
   { x: -35, z: -25.8, width: 7, length: 2.4, height: 1.5, dir: 'z+', profile: 'quarter' },
+  // half pipe: transições mais altas e íngremes, 8 m de fundo plano, decks atrás
+  { x: 35, z: -43.6, width: 8, length: 3.2, height: 2, dir: 'z-', profile: 'quarter', maxAngle: MathUtils.degToRad(75) },
+  { x: 35, z: -32.4, width: 8, length: 3.2, height: 2, dir: 'z+', profile: 'quarter', maxAngle: MathUtils.degToRad(75) },
+  // spine: dois quarters de costas; passa por cima e desce do outro lado
+  { x: 20, z: -41.1, width: 6, length: 2.2, height: 1.2, dir: 'z+', profile: 'quarter', vert: false },
+  { x: 20, z: -38.9, width: 6, length: 2.2, height: 1.2, dir: 'z-', profile: 'quarter', vert: false },
+  // roller: lombada suave
+  { x: 48, z: -19.25, width: 5, length: 2.5, height: 0.5, dir: 'z+', profile: 'roll' },
+  { x: 48, z: -16.75, width: 5, length: 2.5, height: 0.5, dir: 'z-', profile: 'roll' },
+  // hump de topo plano
+  { x: 48, z: -40.25, width: 5, length: 2.5, height: 0.6, dir: 'z+', profile: 'roll' },
+  { x: 48, z: -34.75, width: 5, length: 2.5, height: 0.6, dir: 'z-', profile: 'roll' },
+  // funbox: sobe pela cunha, cruza o topo (com corrimão) e desce do outro lado
+  { x: -45, z: 34.75, width: 4, length: 2.5, height: 0.5, dir: 'z+' },
+  { x: -45, z: 41.25, width: 4, length: 2.5, height: 0.5, dir: 'z-' },
 ];
 
 // postes colidíveis: 2 sobre as ilhas (manual pads), 2 em áreas livres
@@ -184,6 +222,8 @@ export const CONFIG = {
     turnRateSlow: 2.5,
     turnRateFast: 1.5,
     gravity: 22,
+    /** fração da gravidade que freia/acelera no chão inclinado (rampas levam o skater mais longe) */
+    slopeGravity: 0.5,
     ollieVelocity: 5.8,
     airSpinRate: 6,
     landingTolerance: MathUtils.degToRad(35),
@@ -209,6 +249,8 @@ export const CONFIG = {
     vertCarry: 0.06,
     /** no air do quarter pipe, velocidade (m/s) de volta para dentro da transição */
     vertReturn: 0.35,
+    /** teto da velocidade vertical (m/s) que a transição dá ao sair pelo coping (~1,1 m de air) */
+    vertMaxLaunch: 7,
     /** descendo rampa, folga extra (× a queda esperada no passo) antes de soltar do chão */
     rampStickFactor: 1.5,
     spawnX: 0,

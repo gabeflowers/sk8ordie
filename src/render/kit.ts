@@ -16,7 +16,7 @@ import {
 } from 'three';
 import type { BoxDef, PoleDef, RailDef, RampDef, VisualConfig, WorldConfig } from '../config';
 import { forwardFromYaw } from '../sim/math';
-import { quarterCurve } from '../sim/World';
+import { rampFromDef, rampProfile } from '../sim/World';
 import { merge, paint, placeYaw } from './geometry';
 
 /** Postes colidíveis + decorativos fora do limite do mapa, com os braços virados para dentro. */
@@ -99,22 +99,22 @@ const RAMP_YAW: Record<RampDef['dir'], number> = { 'z+': 0, 'z-': Math.PI, 'x+':
 
 /**
  * Rampa: superfície subindo para +Z (local), face vertical no lip e laterais. Na cunha a
- * superfície é um plano; no quarter pipe é o mesmo arco da colisão (World.rampProfile), em
- * fatias com normais suaves. Indexada para o merge.
+ * superfície é um plano; nas curvas (quarter, roll) é o mesmo perfil da colisão
+ * (World.rampProfile), em fatias com normais suaves. Indexada para o merge.
  */
 export function rampParts(ramp: RampDef, world: WorldConfig, visual: VisualConfig): { body: BufferGeometry; lip: BufferGeometry } {
   const w = ramp.width / 2;
   const l = ramp.length / 2;
   const h = ramp.height;
   const k = visual.kit;
-  const quarter = ramp.profile === 'quarter';
-  const n = quarter ? k.quarterSegments : 1;
-  const maxSin = Math.sin(world.quarterMaxAngle);
+  const shape = rampFromDef(ramp, world.quarterMaxAngle);
+  const quarter = shape.shape === 'quarter';
+  const n = shape.shape === 'flat' ? 1 : k.quarterSegments;
   // perfil (z, y) do pé da rampa até o lip
   const profile: [number, number][] = [];
   for (let i = 0; i <= n; i++) {
     const u = i / n;
-    profile.push([-l + 2 * l * u, h * (quarter ? quarterCurve(u, maxSin) : u)]);
+    profile.push([-l + 2 * l * u, h * rampProfile(shape, u)]);
   }
 
   const positions: number[] = [];

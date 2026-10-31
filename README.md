@@ -10,7 +10,7 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 - **Giro no ar.** Pousa limpo de frente ou de costas; de costas, segue andando de **fakie**. Só cai quem pousa atravessado.
 - **Grind** nos corrimões (inclusive o inclinado da escadaria) e nas bordas dos caixotes, ledges e manual pads, com 10 variações: 50-50, 5-0, nosegrind, smith, feeble, crooked, boardslide, noseslide, tailslide e lipslide.
 - **Rampas** (kickers e bank) com chão inclinado de verdade: freiam na subida, aceleram na descida e lançam no lip.
-- **Quarter pipes** com transição curva: subindo rápido, sai num **air** quase vertical e volta para a rampa descendo de fakie; devagar, para na transição e desce de costas. O coping também dá grind.
+- **Quarter pipes** com transição curva: subindo rápido, sai num **air** quase vertical e volta para a rampa descendo de fakie; devagar, para na transição e desce de costas. O coping também dá grind. No ar, o corpo fica alinhado com a transição de onde saiu; saindo de kicker, acompanha a trajetória.
 - **Desafios** (kickflip, manual, feeble, air, x2, 360 flip, linha de 5 manobras, linhas de 3.000 e 10.000) no canto superior esquerdo; o progresso fica salvo no navegador.
 - **Tombo com física.** O corpo vira ragdoll e o shape solta do pé na direção do movimento; depois o skater levanta e o shape volta para o pé.
 - **Painel de tuning** (lil-gui, só em dev). Ajusta física, câmera, luz e animação ao vivo e copia os valores em JSON para colar no `src/config.ts`.
@@ -62,7 +62,16 @@ Para trilhar: dê ollie e caia sobre um corrimão ou sobre a borda de um obstác
 | atravessado | — / W / S | Boardslide / Noseslide / Tailslide |
 | atravessado | A ou D | Lipslide |
 
-O mapa tem **escadaria** com corrimão inclinado (sobe pelo bank, desce pelos degraus ou trilhando o corrimão), **kickers** que lançam no lip, banks de chão inclinado e uma **mini-rampa** com dois quarter pipes frente a frente.
+O mapa tem **escadaria** com corrimão inclinado (sobe pelo bank, desce pelos degraus ou trilhando o corrimão), **kickers** que lançam no lip e banks de chão inclinado. Também tem rampas de pista:
+
+| Peça | Como anda |
+|---|---|
+| **Mini-rampa** | dois quarter pipes de 1,5 m frente a frente, com deck atrás do coping |
+| **Half pipe** | transições de 2 m, mais íngremes (75°), fundo plano de 8 m e decks |
+| **Spine** | dois quarters de costas: passa por cima e desce do outro lado, sem air vertical |
+| **Roller** | lombada em S suave para manter a velocidade |
+| **Hump de topo plano** | sobe, cruza o topo e desce |
+| **Funbox** | cunha, topo com corrimão para trilhar e cunha de descida |
 
 ### Pontuação
 

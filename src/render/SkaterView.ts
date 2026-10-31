@@ -391,10 +391,9 @@ export class SkaterView {
     );
     this.root.rotation.y = this.renderYaw + this.yawOffset + this.slideYaw;
 
-    // rampa / corrimão de escada: o skater inclina junto com o chão, no sentido do shape
-    let noseSlope = 0;
-    if (sim.speed > EPSILON) noseSlope = sim.groundSlope * Math.cos(wrapAngle(Math.atan2(sim.velocity.x, sim.velocity.z) - sim.yaw));
-    this.slopePitch = MathUtils.damp(this.slopePitch, Math.atan(noseSlope), vt0.slopePitchDamping, dt);
+    // rampa / corrimão de escada: o skater inclina junto com o chão, no sentido do shape;
+    // no ar, mantém a orientação com que saiu da rampa
+    this.slopePitch = MathUtils.damp(this.slopePitch, this.targetPitch(sim), vt0.slopePitchDamping, dt);
     this.root.rotation.x = -this.slopePitch;
 
     if (sim.ollieCount !== this.seenOllies) {
@@ -931,4 +930,22 @@ export class SkaterView {
     this.bodyPivot.add(m);
     return m;
   }
+
+  /**
+   * Inclinação do corpo (rad, + = nose para cima). No chão segue a rampa. No air do quarter pipe
+   * fica alinhado com a transição em que decolou (sobe e desce "de pé" na parede). Saindo de
+   * kicker/bank acompanha a trajetória (nose sobe, depois desce), limitado ao ângulo do lip;
+   * ollie no plano sai reto.
+   */
+  private targetPitch(sim: SkaterSim): number {
+    const along = (): number => Math.cos(wrapAngle(Math.atan2(sim.velocity.x, sim.velocity.z) - sim.yaw));
+    if (sim.state !== 'AIRBORNE') return sim.speed > EPSILON ? Math.atan(sim.groundSlope * along()) : 0;
+    if (sim.vertAir) return sim.launchPitch;
+    const limit = Math.abs(sim.launchPitch);
+    if (limit < EPSILON) return 0;
+    const h = Math.hypot(sim.velocity.x, sim.velocity.z);
+    const path = h > EPSILON ? Math.atan2(sim.velocity.y, h) * Math.sign(along()) : 0;
+    return MathUtils.clamp(path, -limit, limit);
+  }
+
 }

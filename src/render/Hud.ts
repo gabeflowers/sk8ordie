@@ -10,7 +10,7 @@ const STYLE = `
   text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 .sk8-hud .score b { font-size: 24px; color: #fff; }
 .sk8-hud .line { position: absolute; right: 18px; bottom: 72px; display: flex; align-items: flex-end; gap: 12px;
-  transition: opacity 0.3s; text-shadow: 0 2px 4px rgba(0,0,0,0.7); }
+  opacity: 0; transition: opacity 0.3s; text-shadow: 0 2px 4px rgba(0,0,0,0.7); }
 .sk8-hud .stack { text-align: right; line-height: 1.1; }
 .sk8-hud .prev { font-size: 14px; color: rgba(231,226,214,0.7); letter-spacing: 0.04em; }
 .sk8-hud .current { font-size: 26px; font-weight: 700; color: #fff; letter-spacing: 0.03em;
@@ -25,7 +25,7 @@ const STYLE = `
 .sk8-hud .result.banked { color: #ffcf7a; }
 .sk8-hud .result.bail { color: #ff4d4d; }
 .sk8-hud .balance { position: absolute; left: 50%; bottom: 18%; width: 220px; height: 10px; margin-left: -110px;
-  border-radius: 5px; background: rgba(7,11,28,0.7); box-shadow: inset 0 0 0 1px rgba(255,46,136,0.6); transition: opacity 0.2s; }
+  border-radius: 5px; background: rgba(7,11,28,0.7); box-shadow: inset 0 0 0 1px rgba(255,46,136,0.6); opacity: 0; transition: opacity 0.2s; }
 .sk8-hud .balance i { position: absolute; top: -4px; width: 4px; height: 18px; margin-left: -2px; border-radius: 2px; background: #fff;
   box-shadow: 0 0 8px #ff2e88; }
 `;

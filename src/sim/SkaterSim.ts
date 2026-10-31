@@ -46,6 +46,8 @@ export class SkaterSim {
   grindVariant: GrindVariant | null = null;
   /** Inclinação do chão (ou do trilho) no sentido em que o skater anda: dy por metro. */
   groundSlope = 0;
+  /** Inclinação do shape (rad, + = nose para cima) no instante em que saiu do chão ou do trilho. */
+  launchPitch = 0;
   /** Tangente unitária do trilho no sentido do movimento; (0, 0, 0) fora de GRINDING. */
   readonly grindDir = new Vector3();
 
@@ -223,7 +225,7 @@ export class SkaterSim {
     this.yaw += turn * MathUtils.lerp(c.turnRateSlow, c.turnRateFast, speedT) * dt * turnScale;
 
     // rampa: a gravidade freia na subida e acelera na descida
-    speed = Math.max(0, speed - c.gravity * (this.groundSlope / Math.hypot(1, this.groundSlope)) * dt);
+    speed = Math.max(0, speed - c.gravity * c.slopeGravity * (this.groundSlope / Math.hypot(1, this.groundSlope)) * dt);
 
     // friction antes do push: segurar ↑ estabiliza exatamente em maxPushSpeed
     speed = Math.max(0, speed - c.rollingFriction * dt);
@@ -255,6 +257,14 @@ export class SkaterSim {
     }
 
     this.position.addScaledVector(this.velocity, dt);
+    const q = this.quarter;
+    if (q?.vert && pastLip(q, this.position)) {
+      // passou do coping: decola ali mesmo, antes que o deck atrás vire parede
+      clampToLip(q, this.position);
+      this.position.y = q.height;
+      this.takeOff(true);
+      return;
+    }
     this.collideSides();
     if (this.state !== 'GROUNDED') return;
 
@@ -264,27 +274,33 @@ export class SkaterSim {
     const descent = this.groundSlope < 0 ? -this.groundSlope * this.speed * dt * c.rampStickFactor : 0;
     if (groundY < footY - c.stepTolerance - descent) {
       // o chão sumiu: saiu de uma borda (ou passou pelo lip da rampa e é lançado)
-      this.state = 'AIRBORNE';
-      const vert = this.quarter !== null;
-      if (vert) {
-        // saiu pelo coping: air quase vertical, que volta para a transição
-        this.velocity.y = Math.max(0, this.speed * this.groundSlope);
-        this.launchVert();
-      } else {
-        this.velocity.y = Math.max(0, this.speed * this.groundSlope * c.rampLaunch);
-      }
-      this.groundSlope = 0;
-      this.quarter = null;
-      this.coyoteTimer = c.coyoteTime;
-      this.endManual(true);
-      this.endPowerslide(false);
-      this.resetAir(false);
-      this.airVert = vert;
+      this.takeOff(this.quarter?.vert === true);
     } else {
       this.position.y = groundY;
       this.groundSlope = this.measureSlope();
       this.quarter = this.groundSlope > c.rollbackSlope ? this.world.quarterAt(this.position.x, this.position.z) : null;
     }
+  }
+
+  /** Sai do chão rodando (sem pop): borda, lip de kicker ou coping do quarter pipe (`vert`). */
+  private takeOff(vert: boolean): void {
+    const c = this.cfg;
+    this.state = 'AIRBORNE';
+    if (vert) {
+      // saiu pelo coping: air quase vertical, que volta para a transição
+      this.velocity.y = MathUtils.clamp(this.speed * this.groundSlope, 0, c.vertMaxLaunch);
+      this.launchVert();
+    } else {
+      this.velocity.y = Math.max(0, this.speed * this.groundSlope * c.rampLaunch);
+    }
+    this.captureLaunch();
+    this.groundSlope = 0;
+    this.quarter = null;
+    this.coyoteTimer = c.coyoteTime;
+    this.endManual(true);
+    this.endPowerslide(false);
+    this.resetAir(false);
+    this.airVert = vert;
   }
 
   /**
@@ -404,12 +420,13 @@ export class SkaterSim {
     this.pendingPop = null;
     // agachar mais = pop mais alto (sem dados de pop, altura máxima)
     // na rampa, a subida soma ao pop
-    const vert = this.state === 'GROUNDED' && this.quarter !== null;
+    const vert = this.state === 'GROUNDED' && this.quarter?.vert === true;
     const climb = this.state === 'GROUNDED' ? Math.max(0, this.speed * this.groundSlope) : 0;
-    const rampLift = vert ? climb : climb * this.cfg.rampLaunch;
+    const rampLift = vert ? Math.min(climb, this.cfg.vertMaxLaunch) : climb * this.cfg.rampLaunch;
     this.velocity.y = this.cfg.ollieVelocity * MathUtils.lerp(t.minPopFactor, 1, pop ? pop.charge : 1) + rampLift;
     // pop na transição: sobe reto e volta para a rampa
     if (vert) this.launchVert();
+    this.captureLaunch();
     this.groundSlope = 0;
     this.quarter = null;
     this.state = 'AIRBORNE';
@@ -494,6 +511,17 @@ export class SkaterSim {
   }
 
   /** Começa a rastrear um voo (pop ou saída de borda/trilho). */
+  /** Air saído do coping do quarter pipe (o corpo fica alinhado com a transição). */
+  get vertAir(): boolean {
+    return this.airVert;
+  }
+
+  /** Guarda a inclinação do shape na decolagem (antes de zerar groundSlope). */
+  private captureLaunch(): void {
+    // no chão a velocidade segue o shape: de fakie o nose aponta para trás
+    this.launchPitch = Math.atan(this.groundSlope * (this.fakie ? -1 : 1));
+  }
+
   private resetAir(popped: boolean): void {
     this.airVert = false;
     this.grab = null;
@@ -642,6 +670,7 @@ export class SkaterSim {
     this.state = 'AIRBORNE';
     // descendo um corrimão de escada, sai já caindo junto com ele
     this.velocity.y = Math.min(0, this.speed * this.groundSlope);
+    this.captureLaunch();
     this.groundSlope = 0;
     // arcade: o shape volta para o eixo do movimento, então o pouso é limpo. O boardslide sai
     // de frente; o 50-50 mantém o sentido em que entrou (de costas continua fakie).
@@ -734,7 +763,16 @@ export class SkaterSim {
   /** Colisão lateral com caixas mais altas que o pé. Retorna true se encostou em alguma. */
   private collideSides(): boolean {
     const c = this.cfg;
-    const minWallTop = this.position.y + c.stepTolerance;
+    // subindo rampa, a borda do círculo chega antes do pé no que está no topo (deck, funbox):
+    // vale a altura da rampa embaixo da borda da frente
+    let floor = this.position.y;
+    const h = horizontalSpeed(this.velocity);
+    if (this.state === 'GROUNDED' && this.groundSlope > 0 && h > EPSILON) {
+      const k = c.skaterRadius / h;
+      const p = this.position;
+      floor = Math.max(floor, this.world.rampSurfaceAhead(p.x, p.z, p.x + this.velocity.x * k, p.z + this.velocity.z * k));
+    }
+    const minWallTop = floor + c.stepTolerance;
     // trilhando um corrimão, a colisão dele mesmo não conta
     const ignore = this.state === 'GRINDING' ? this.grindSegment?.rail.railId : undefined;
     if (!this.world.resolveCircleCollisions(this.position, c.skaterRadius, minWallTop, this.hitNormal, ignore)) return false;
@@ -749,4 +787,17 @@ export class SkaterSim {
     if (this.state !== 'BAILED' && impact > c.bailImpactSpeed) this.bail(this.preImpact, this.hitNormal);
     return true;
   }
+}
+
+/** Passou da linha do coping (a ponta alta da rampa)? */
+function pastLip(r: Ramp, p: Vector3): boolean {
+  if (r.axis === 'x') return r.sign > 0 ? p.x > r.maxX : p.x < r.minX;
+  return r.sign > 0 ? p.z > r.maxZ : p.z < r.minZ;
+}
+
+/** Traz o ponto de volta para a linha do coping, um tico para dentro da rampa. */
+function clampToLip(r: Ramp, p: Vector3): void {
+  const inset = 1e-3;
+  if (r.axis === 'x') p.x = r.sign > 0 ? r.maxX - inset : r.minX + inset;
+  else p.z = r.sign > 0 ? r.maxZ - inset : r.minZ + inset;
 }

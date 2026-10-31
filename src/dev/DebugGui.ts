@@ -18,6 +18,8 @@ const SIM_FOLDERS: Record<string, Partial<Record<keyof typeof CONFIG.sim, Range>
   },
   Ar: {
     gravity: [1, 60, 0.5],
+    slopeGravity: [0, 1, 0.05],
+    vertMaxLaunch: [1, 15, 0.1],
     ollieVelocity: [0, 15, 0.1],
     airSpinRate: [0, 15, 0.1],
     landingMinSpeed: [0, 3, 0.05],
