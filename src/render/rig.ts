@@ -35,6 +35,9 @@ export interface RigInput {
   ankleB: Vector3;
   /** 0..1: quanto o skater está inclinado na curva (sobe e abre as mãos) */
   curveT: number;
+  /** Para onde cada joelho dobra; sem isso, o padrão do rig (lado do peito). */
+  poleF?: Vector3;
+  poleB?: Vector3;
 }
 
 export function createJoints(): RigJoints {
@@ -132,8 +135,10 @@ export function computeJoints(input: RigInput, cfg: RigConfig, out: RigJoints): 
   // pernas
   out.hipF.copy(out.hip).setZ(cfg.hipHalf);
   out.hipB.copy(out.hip).setZ(-cfg.hipHalf);
-  poleF.set(cfg.kneePoleX, 0, cfg.kneePoleZ);
-  poleB.set(cfg.kneePoleX, 0, -cfg.kneePoleZ);
+  if (input.poleF) poleF.copy(input.poleF);
+  else poleF.set(cfg.kneePoleX, 0, cfg.kneePoleZ);
+  if (input.poleB) poleB.copy(input.poleB);
+  else poleB.set(cfg.kneePoleX, 0, -cfg.kneePoleZ);
   solveTwoBoneIK(out.hipF, input.ankleF, cfg.thigh, cfg.shin, poleF, out.kneeF, out.ankleF);
   solveTwoBoneIK(out.hipB, input.ankleB, cfg.thigh, cfg.shin, poleB, out.kneeB, out.ankleB);
 

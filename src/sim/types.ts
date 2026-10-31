@@ -1,4 +1,5 @@
 import type { SolidDef } from '../config';
+import type { PopIntent, TrickId } from './tricks/gesture';
 
 /** Input já abstraído do teclado; a simulação nunca lê o DOM. */
 export interface InputState {
@@ -6,8 +7,14 @@ export interface InputState {
   brake: boolean;
   left: boolean;
   right: boolean;
-  /** borda: true só no passo em que o SPACE foi apertado */
+  /** borda: true só no passo do pop (soltar Espaço/Q depois de agachar) */
   jumpPressed: boolean;
+  /** agachado, segurando o pop */
+  crouch?: boolean;
+  /** detalhes do pop junto com jumpPressed: nollie, carga e flip */
+  pop?: PopIntent;
+  /** batida de flip sem agachar (late flip, se ainda der tempo no ar) */
+  lateTrick?: TrickId | null;
 }
 
 export type SkaterState = 'GROUNDED' | 'AIRBORNE' | 'BAILED' | 'GRINDING';

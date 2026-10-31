@@ -170,6 +170,22 @@ describe('BAILED', () => {
   });
 });
 
+describe('remada (sinal para o visual)', () => {
+  it('pushing só com ↑ no chão e sem frear', () => {
+    const sim = makeSim();
+    sim.step(input({ forward: true }), DT);
+    expect(sim.pushing).toBe(true);
+    sim.step(input({ forward: true, brake: true }), DT);
+    expect(sim.pushing).toBe(false);
+    sim.step(input(), DT);
+    expect(sim.pushing).toBe(false);
+    jump(sim, { forward: true });
+    steps(sim, 3, { forward: true });
+    expect(sim.state).toBe('AIRBORNE');
+    expect(sim.pushing).toBe(false);
+  });
+});
+
 describe('fakie: pousar de costas', () => {
   /** Ollie a 6 m/s girando `spinSteps` passos no ar (airSpinRate 6 → 0,1 rad por passo). */
   function spinAndLand(sim: SkaterSim, spinSteps: number): SkaterSim {

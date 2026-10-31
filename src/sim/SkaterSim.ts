@@ -3,6 +3,8 @@ import type { SimConfig } from '../config';
 import { findGrindSnap, lockedGrindYaw, type GrindSegment, type GrindSnap } from './grind';
 import { resolveLanding } from './landing';
 import { EPSILON, forwardFromYaw, headingOf, horizontalSpeed, wrapAngle } from './math';
+import { Score } from './score';
+import type { PopIntent, TrickId } from './tricks/gesture';
 import type { GrindRail, GrindType, InputState, SkaterState } from './types';
 import type { World } from './World';
 
@@ -35,6 +37,8 @@ export class SkaterSim {
   readonly bailNormal = new Vector3();
   /** Último input de giro aplicado (-1..1), usado pelo visual. */
   turnInput = 0;
+  /** Remando neste passo (↑ no chão, sem frear); o visual anima a remada. */
+  pushing = false;
 
   /** Manobra atual; null fora de GRINDING. */
   grindType: GrindType | null = null;
@@ -48,6 +52,22 @@ export class SkaterSim {
   /** Incrementado a cada entrada em GRINDING. */
   grindCount = 0;
 
+  /** Flip em andamento no ar (o shape gira até `duration`). */
+  trick: { id: TrickId; t: number; duration: number; late: boolean } | null = null;
+  /** Agachado segurando o pop (o visual agacha o skater). */
+  crouching = false;
+  /** Pontuação da sessão: linha atual, multiplicador, total. */
+  readonly score: Score;
+
+  // rastreio do voo atual, para nomear e pontuar a manobra no pouso
+  private pendingPop: PopIntent | null = null;
+  private airPopped = false;
+  private airNollie = false;
+  private airFakie = false;
+  private airTime = 0;
+  private airYaw0 = 0;
+  private grindTime = 0;
+
   private grindSegment: GrindSegment | null = null;
   private readonly forward = new Vector3();
   private readonly hitNormal = new Vector3();
@@ -57,7 +77,13 @@ export class SkaterSim {
     readonly world: World,
     readonly cfg: SimConfig,
   ) {
+    this.score = new Score(cfg.score);
     this.reset();
+  }
+
+  /** Progresso do flip atual (0..1); 0 sem flip. */
+  get trickProgress(): number {
+    return this.trick ? Math.min(1, this.trick.t / this.trick.duration) : 0;
   }
 
   /** Velocidade horizontal (m/s). */
@@ -88,6 +114,11 @@ export class SkaterSim {
     this.bailTimer = 0;
     this.turnInput = 0;
     this.clearGrind();
+    this.trick = null;
+    this.crouching = false;
+    this.pendingPop = null;
+    this.resetAir(false);
+    this.score.reset();
     this.prevPosition.copy(this.position);
     this.prevYaw = this.yaw;
   }
@@ -98,8 +129,20 @@ export class SkaterSim {
 
     if (input.jumpPressed && this.state !== 'BAILED') {
       this.jumpBufferTimer = this.cfg.jumpBuffer;
+      this.pendingPop = input.pop ?? null;
+    }
+    this.crouching = this.state === 'GROUNDED' && !!input.crouch;
+
+    if (this.state === 'AIRBORNE') {
+      this.airTime += dt;
+      if (this.trick) this.trick.t += dt;
+      // late flip: bater a tecla logo depois de sair do chão
+      if (input.lateTrick && !this.trick && this.airTime <= this.cfg.tricks.lateWindow) {
+        this.startTrick(input.lateTrick, true);
+      }
     }
 
+    this.pushing = false;
     switch (this.state) {
       case 'GROUNDED':
         this.stepGrounded(input, dt);
@@ -116,6 +159,7 @@ export class SkaterSim {
     }
 
     this.world.clampToBounds(this.position, this.velocity, this.cfg.skaterRadius);
+    this.score.tick(dt, this.state === 'GROUNDED');
     this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
     this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
   }
@@ -126,6 +170,7 @@ export class SkaterSim {
     const c = this.cfg;
     const turn = turnAxis(input);
     this.turnInput = turn;
+    this.pushing = input.forward && !input.brake;
 
     let speed = this.speed;
     const speedT = MathUtils.clamp(speed / c.maxSpeed, 0, 1);
@@ -160,6 +205,7 @@ export class SkaterSim {
       this.state = 'AIRBORNE';
       this.velocity.y = 0;
       this.coyoteTimer = c.coyoteTime;
+      this.resetAir(false);
     } else {
       this.position.y = groundY;
     }
@@ -191,7 +237,7 @@ export class SkaterSim {
     // O grind vem antes do pouso e da colisão lateral: cair perto da aresta de uma caixa
     // trilha em vez de pousar no topo. No coyote (acabou de sair rolando de uma borda ou
     // da ponta de um trilho) não engata, para não "grudar" na aresta de onde saiu.
-    if (this.coyoteTimer <= 0) {
+    if (this.coyoteTimer <= 0 && this.trickCaught()) {
       const snap = findGrindSnap(this.world.grindSegments, this.position, prevFootY, this.velocity, this.yaw, c);
       if (snap) {
         this.startGrind(snap);
@@ -213,9 +259,15 @@ export class SkaterSim {
   }
 
   private land(): void {
+    // não pegou o shape: o flip não terminou a tempo
+    if (!this.trickCaught()) {
+      this.bail();
+      return;
+    }
     const outcome = resolveLanding(this.yaw, this.velocity, this.cfg);
     switch (outcome.type) {
       case 'clean':
+        this.awardAir();
         this.state = 'GROUNDED';
         this.fakie = outcome.fakie;
         this.coyoteTimer = 0;
@@ -231,16 +283,90 @@ export class SkaterSim {
   }
 
   private ollie(): void {
-    this.velocity.y = this.cfg.ollieVelocity;
+    const t = this.cfg.tricks;
+    const pop = this.pendingPop;
+    this.pendingPop = null;
+    // agachar mais = pop mais alto (sem dados de pop, altura máxima)
+    this.velocity.y = this.cfg.ollieVelocity * MathUtils.lerp(t.minPopFactor, 1, pop ? pop.charge : 1);
     this.state = 'AIRBORNE';
     this.jumpBufferTimer = 0;
     this.coyoteTimer = 0;
     this.ollieCount++;
+    this.resetAir(true);
+    this.airNollie = pop?.nollie ?? false;
+    if (pop?.trick) this.startTrick(pop.trick, false);
+  }
+
+  // ------------------------------------------------------------------ MANOBRAS
+
+  private startTrick(id: TrickId, late: boolean): void {
+    this.trick = { id, t: 0, duration: this.cfg.tricks.catalog[id].duration, late };
+  }
+
+  /** Sem flip, ou flip adiantado o bastante para o pé pegar o shape. */
+  private trickCaught(): boolean {
+    return !this.trick || this.trick.t / this.trick.duration >= this.cfg.tricks.catchThreshold;
+  }
+
+  /** Começa a rastrear um voo (pop ou saída de borda/trilho). */
+  private resetAir(popped: boolean): void {
+    this.airPopped = popped;
+    this.airNollie = false;
+    this.airFakie = this.fakie;
+    this.airTime = 0;
+    this.airYaw0 = this.yaw;
+    this.trick = null;
+  }
+
+  /** Giro do corpo no voo: meias-voltas completas (com tolerância) e o lado. */
+  private spin(): { degrees: number; side: 'FS' | 'BS' } {
+    const total = this.yaw - this.airYaw0;
+    const half = Math.round(Math.abs(total) / Math.PI);
+    if (half < 1 || Math.abs(Math.abs(total) - half * Math.PI) > this.cfg.tricks.spinTolerance) {
+      return { degrees: 0, side: 'FS' };
+    }
+    // girar para o lado do peito primeiro (yaw +) é frontside
+    return { degrees: half * 180, side: total > 0 ? 'FS' : 'BS' };
+  }
+
+  /** Nomeia e pontua o voo que acabou bem (pouso ou encaixe num trilho). */
+  private awardAir(): void {
+    const t = this.cfg.tricks;
+    const flip = this.trick ? t.catalog[this.trick.id] : null;
+    const spin = this.spin();
+    if (!flip && spin.degrees === 0 && !this.airPopped) {
+      this.resetAir(false);
+      return;
+    }
+
+    const core = flip ? flip.name : spin.degrees > 0 || this.airNollie ? '' : t.ollie.name;
+    const name = [
+      this.airNollie ? 'Nollie' : this.airFakie ? 'Fakie' : '',
+      spin.degrees > 0 ? `${spin.side} ${spin.degrees}` : '',
+      this.trick?.late ? 'Late' : '',
+      core,
+    ]
+      .filter((p) => p !== '')
+      .join(' ');
+
+    let points =
+      (flip ? flip.points : spin.degrees > 0 ? 0 : t.ollie.points) +
+      t.spinPointsPer180 * (spin.degrees / 180) +
+      t.airPointsPerSecond * this.airTime;
+    if (this.airNollie) points *= t.nollieFactor;
+    else if (this.airFakie) points *= t.fakieFactor;
+    if (this.trick?.late) points *= t.lateFactor;
+
+    this.score.add(name, points);
+    this.resetAir(false);
   }
 
   // ---------------------------------------------------------------- GRINDING
 
   private startGrind(snap: GrindSnap): void {
+    // o que foi feito no ar antes de encaixar (flip in) conta
+    this.awardAir();
+    this.grindTime = 0;
     this.state = 'GRINDING';
     this.grindSegment = snap.segment;
     this.grindType = snap.type;
@@ -265,6 +391,7 @@ export class SkaterSim {
     }
     const dir = this.grindDir;
     this.turnInput = 0;
+    this.grindTime += dt;
 
     // só a componente tangente conta (clampToBounds pode ter zerado um eixo)
     let speed = Math.max(0, this.velocity.x * dir.x + this.velocity.z * dir.z);
@@ -301,6 +428,12 @@ export class SkaterSim {
 
   /** Sai do trilho para AIRBORNE com vy = 0 (quem chama decide coyote/ollie). */
   private leaveGrind(): void {
+    const sc = this.cfg.score;
+    if (this.grindType) {
+      const slide = this.grindType === 'boardslide';
+      const points = (sc.grindBasePoints + sc.grindPointsPerSecond * this.grindTime) * (slide ? sc.slideFactor : 1);
+      this.score.add(sc.grindNames[this.grindType], points);
+    }
     this.state = 'AIRBORNE';
     this.velocity.y = 0;
     // arcade: o shape volta para o eixo do movimento, então o pouso é limpo. O boardslide sai
@@ -310,6 +443,7 @@ export class SkaterSim {
       this.yaw += this.grindType === 'boardslide' || Math.abs(d) <= Math.PI / 2 ? d : wrapAngle(d + Math.PI);
     }
     this.clearGrind();
+    this.resetAir(false);
   }
 
   private clearGrind(): void {
@@ -333,6 +467,9 @@ export class SkaterSim {
     if (wallNormal) this.bailNormal.copy(wallNormal);
     else this.bailNormal.set(0, 0, 0);
     this.state = 'BAILED';
+    this.score.bail();
+    this.trick = null;
+    this.pendingPop = null;
     this.bailTimer = 0;
     this.jumpBufferTimer = 0;
     this.coyoteTimer = 0;

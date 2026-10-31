@@ -1,3 +1,5 @@
+import type { SimConfig } from '../config';
+import { TrickGesture } from '../sim/tricks/gesture';
 import type { InputState } from '../sim/types';
 
 const KEY = {
@@ -5,12 +7,11 @@ const KEY = {
   brake: 'ArrowDown',
   left: 'ArrowLeft',
   right: 'ArrowRight',
-  jump: 'Space',
   reset: 'KeyR',
 } as const;
 
-// teclas que não podem rolar a página
-const PREVENT_DEFAULT = new Set<string>([KEY.forward, KEY.brake, KEY.left, KEY.right, KEY.jump]);
+// teclas que não podem rolar a página nem disparar atalhos
+const PREVENT_DEFAULT = new Set<string>([KEY.forward, KEY.brake, KEY.left, KEY.right, 'Space', 'KeyQ']);
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -18,32 +19,39 @@ function isEditable(target: EventTarget | null): boolean {
 }
 
 /**
- * Teclado → InputState. As bordas (jump, reset) ficam guardadas até serem
+ * Teclado → InputState. Setas movem; Espaço/Q agacham e dão o pop ao soltar (ollie/nollie);
+ * A/D/S/W escolhem o flip (ver `TrickGesture`). As bordas ficam guardadas até serem
  * consumidas, então não se perdem em frames sem passo de simulação.
  */
 export class Input {
   private readonly held = new Set<string>();
-  private jumpQueued = false;
+  private readonly gesture: TrickGesture;
   private resetQueued = false;
 
-  constructor(private readonly target: Window = window) {
+  constructor(
+    tricks: SimConfig['tricks'],
+    private readonly target: Window = window,
+  ) {
+    this.gesture = new TrickGesture(tricks);
     target.addEventListener('keydown', this.onKeyDown);
     target.addEventListener('keyup', this.onKeyUp);
     target.addEventListener('blur', this.clear);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
-  /** Estado para UM passo de simulação; consome a borda do jump. */
+  /** Estado para UM passo de simulação; consome o pop e o late flip. */
   consume(): InputState {
-    const state: InputState = {
+    const pop = this.gesture.consumePop();
+    return {
       forward: this.held.has(KEY.forward),
       brake: this.held.has(KEY.brake),
       left: this.held.has(KEY.left),
       right: this.held.has(KEY.right),
-      jumpPressed: this.jumpQueued,
+      jumpPressed: pop !== null,
+      crouch: this.gesture.crouching,
+      pop: pop ?? undefined,
+      lateTrick: this.gesture.consumeLate(),
     };
-    this.jumpQueued = false;
-    return state;
   }
 
   consumeReset(): boolean {
@@ -66,12 +74,13 @@ export class Input {
 
     this.held.add(e.code);
     if (e.repeat) return;
-    if (e.code === KEY.jump) this.jumpQueued = true;
+    this.gesture.keyDown(e.code, e.timeStamp / 1000);
     if (e.code === KEY.reset) this.resetQueued = true;
   };
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
     this.held.delete(e.code);
+    this.gesture.keyUp(e.code, e.timeStamp / 1000);
   };
 
   private readonly onVisibilityChange = (): void => {
@@ -80,7 +89,7 @@ export class Input {
 
   private readonly clear = (): void => {
     this.held.clear();
-    this.jumpQueued = false;
+    this.gesture.clear();
     this.resetQueued = false;
   };
 }

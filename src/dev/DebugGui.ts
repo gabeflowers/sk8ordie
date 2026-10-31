@@ -44,7 +44,10 @@ const SIM_FOLDERS: Record<string, Partial<Record<keyof typeof CONFIG.sim, Range>
 };
 
 /** Ângulos guardados em radianos no config e editados em graus na GUI. */
-const DEGREE_KEYS: Partial<Record<keyof typeof CONFIG.sim, [folder: string, max: number]>> = {
+/** Chaves numéricas do config da sim (os blocos aninhados, como tricks e score, ficam de fora). */
+type NumericSimKey = { [K in keyof typeof CONFIG.sim]: (typeof CONFIG.sim)[K] extends number ? K : never }[keyof typeof CONFIG.sim];
+
+const DEGREE_KEYS: Partial<Record<NumericSimKey, [folder: string, max: number]>> = {
   landingTolerance: ['Ar', 90],
   grindMaxApproachAngle: ['Grind', 90],
   grindFiftyFiftyAngle: ['Grind', 90],
@@ -68,6 +71,28 @@ const JUICE_RANGES: Partial<Record<keyof typeof CONFIG.visual.juice, Range>> = {
   popAngle: [0, 1, 0.01],
   popDuration: [0.05, 1, 0.01],
   landCrouchDuration: [0.05, 1, 0.01],
+};
+
+const PUSH_RANGES: Partial<Record<keyof typeof CONFIG.visual.push, Range>> = {
+  cycleDuration: [0.3, 2, 0.05],
+  maxGap: [0, 4, 0.1],
+  plantX: [-0.6, 0, 0.01],
+  plantZ: [-0.4, 0.4, 0.01],
+  strokeMinZ: [-1, 0, 0.01],
+  liftReach: [0, 0.4, 0.01],
+  liftRecover: [0, 0.4, 0.01],
+};
+
+const TRICK_RANGES: Partial<Record<keyof typeof CONFIG.sim.tricks, Range>> = {
+  chargeTime: [0.05, 1, 0.01],
+  minPopFactor: [0.3, 1, 0.01],
+  lateWindow: [0, 0.6, 0.01],
+  catchThreshold: [0.3, 1, 0.01],
+};
+
+const SCORE_RANGES: Partial<Record<keyof typeof CONFIG.sim.score, Range>> = {
+  comboTimeout: [0.2, 4, 0.05],
+  repeatFactor: [0, 1, 0.05],
 };
 
 const LIGHT_RANGES: Partial<Record<keyof typeof CONFIG.visual.lights, Range>> = {
@@ -117,12 +142,12 @@ export function setupDebugGui(game: Game): GUI {
   // ângulos ficam em radianos no config; aqui são editados em graus por um proxy
   const deg: Record<string, number> = {};
   const syncDegrees = (): void => {
-    for (const key of Object.keys(DEGREE_KEYS) as (keyof typeof CONFIG.sim)[]) {
+    for (const key of Object.keys(DEGREE_KEYS) as NumericSimKey[]) {
       deg[key] = MathUtils.radToDeg(CONFIG.sim[key]);
     }
   };
   syncDegrees();
-  for (const [key, spec] of Object.entries(DEGREE_KEYS) as [keyof typeof CONFIG.sim, [string, number]][]) {
+  for (const [key, spec] of Object.entries(DEGREE_KEYS) as [NumericSimKey, [string, number]][]) {
     simFolders
       .get(spec[0])
       ?.add(deg, key, 0, spec[1], 1)
@@ -134,6 +159,10 @@ export function setupDebugGui(game: Game): GUI {
 
   addRanges(gui.addFolder('Câmera'), CONFIG.camera, CAMERA_RANGES);
   addRanges(gui.addFolder('Juice'), CONFIG.visual.juice, JUICE_RANGES);
+  addRanges(gui.addFolder('Remada'), CONFIG.visual.push, PUSH_RANGES);
+  const tricks = gui.addFolder('Manobras');
+  addRanges(tricks, CONFIG.sim.tricks, TRICK_RANGES);
+  addRanges(tricks, CONFIG.sim.score, SCORE_RANGES);
 
   const visual = gui.addFolder('Luz e névoa');
   visual.add(CONFIG.visual, 'debugGrid').name('grid de debug');
@@ -149,6 +178,7 @@ export function setupDebugGui(game: Game): GUI {
         Object.assign(CONFIG.sim, defaults.sim);
         Object.assign(CONFIG.camera, defaults.camera);
         Object.assign(CONFIG.visual.juice, defaults.visual.juice);
+        Object.assign(CONFIG.visual.push, defaults.visual.push);
         Object.assign(CONFIG.visual.lights, defaults.visual.lights);
         Object.assign(CONFIG.visual.fog, defaults.visual.fog);
         CONFIG.visual.debugGrid = defaults.visual.debugGrid;
@@ -166,6 +196,7 @@ export function setupDebugGui(game: Game): GUI {
           sim: CONFIG.sim,
           camera: CONFIG.camera,
           juice: CONFIG.visual.juice,
+          push: CONFIG.visual.push,
           lights: CONFIG.visual.lights,
           fog: CONFIG.visual.fog,
         };

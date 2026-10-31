@@ -60,7 +60,13 @@ export interface PoseParams {
 const deg = MathUtils.degToRad;
 
 // o bail não tem pose-chave: o corpo vira ragdoll (visual.bail)
-const POSES: Record<'base' | 'landing' | 'air' | 'grind', PoseParams> = {
+const POSES: Record<'base' | 'landing' | 'air' | 'grind' | 'push', PoseParams> = {
+  // remada: vira o tronco para o nose, desce o quadril sobre o pé da frente e deixa os braços soltos
+  push: {
+    hipX: -0.08, hipY: 0.76, lean: deg(18), twist: deg(70), headYaw: deg(85), headPitch: deg(15),
+    elbowF: [0.04, -0.28, 0.06], handF: [0.02, -0.26, 0.12],
+    elbowB: [-0.04, -0.28, -0.04], handB: [-0.02, -0.27, 0.06],
+  },
   // grind: quadril baixo, braços abertos na altura do ombro para equilíbrio
   grind: {
     hipX: 0.06, hipY: 0.76, lean: deg(18), twist: deg(10), headYaw: deg(75), headPitch: deg(22),
@@ -161,6 +167,57 @@ export const CONFIG = {
     grindExitSpeed: 0.75,
     /** desaceleração ao longo do trilho (m/s²) */
     grindFriction: 1.5,
+
+    /** Manobras (inspiradas no Flick-It do Skate 3, adaptado ao teclado). */
+    tricks: {
+      /** segurar o pop até isso (s) dá a altura máxima; um toque rápido dá minPopFactor */
+      chargeTime: 0.35,
+      minPopFactor: 0.75,
+      /** depois de sair do chão, ainda dá para começar um flip (late flip) até isso (s) */
+      lateWindow: 0.3,
+      /** pousar com o flip abaixo dessa fração = não pegou o shape → bail */
+      catchThreshold: 0.8,
+      /** duas batidas na mesma tecla durante o agachamento = versão "double" */
+      doubleTap: 2,
+      /** giro do corpo: tolerância (rad) para contar como 180/360/... */
+      spinTolerance: MathUtils.degToRad(40),
+      ollie: { name: 'Ollie', points: 50 },
+      spinPointsPer180: 150,
+      airPointsPerSecond: 80,
+      nollieFactor: 1.3,
+      fakieFactor: 1.15,
+      lateFactor: 1.25,
+      /**
+       * Flips: `flip` = voltas no eixo longo (+ = kickflip), `shove` = meias-voltas em Y
+       * (+ = backside), `duration` = tempo da rotação no ar (s).
+       */
+      catalog: {
+        kickflip: { name: 'Kickflip', points: 300, duration: 0.42, flip: 1, shove: 0 },
+        heelflip: { name: 'Heelflip', points: 300, duration: 0.42, flip: -1, shove: 0 },
+        popShove: { name: 'Pop Shove-it', points: 250, duration: 0.36, flip: 0, shove: 1 },
+        fsShove: { name: 'FS Shove-it', points: 250, duration: 0.36, flip: 0, shove: -1 },
+        varialKickflip: { name: 'Varial Kickflip', points: 500, duration: 0.46, flip: 1, shove: 1 },
+        varialHeelflip: { name: 'Varial Heelflip', points: 500, duration: 0.46, flip: -1, shove: -1 },
+        hardflip: { name: 'Hardflip', points: 600, duration: 0.48, flip: 1, shove: -1 },
+        inwardHeelflip: { name: 'Inward Heelflip', points: 600, duration: 0.48, flip: -1, shove: 1 },
+        treFlip: { name: '360 Flip', points: 800, duration: 0.52, flip: 1, shove: 2 },
+        shove360: { name: '360 Shove-it', points: 550, duration: 0.46, flip: 0, shove: 2 },
+        doubleKickflip: { name: 'Double Kickflip', points: 700, duration: 0.5, flip: 2, shove: 0 },
+        doubleHeelflip: { name: 'Double Heelflip', points: 700, duration: 0.5, flip: -2, shove: 0 },
+      },
+    },
+
+    /** Pontuação estilo Skate 3: multiplicador sobe a cada manobra única da linha; bail zera. */
+    score: {
+      /** rolando no chão sem manobra por isso (s), a linha fecha e os pontos entram no total */
+      comboTimeout: 1.2,
+      /** repetir a mesma manobra na linha rende cada vez menos */
+      repeatFactor: 0.5,
+      grindBasePoints: 150,
+      grindPointsPerSecond: 250,
+      slideFactor: 1.2,
+      grindNames: { '5050': '50-50', boardslide: 'Boardslide' },
+    },
   },
 
   world: {
@@ -553,6 +610,63 @@ export const CONFIG = {
       boardReturnPerMeter: 0.04,
       boardReturnArc: 0.3,
       boardReturnArcPerMeter: 0.08,
+    },
+
+    /**
+     * Remada: o pé de trás sai do shape, pisa no chão do lado do peito, fica cravado no asfalto
+     * enquanto o shape passa (empurrão) e volta para o tail. Frações são do ciclo inteiro.
+     */
+    push: {
+      cycleDuration: 0.85,
+      /** fim da ida do pé até o chão */
+      reachEnd: 0.22,
+      /** fim do contato com o chão (pode soltar antes, se o pé ficar para trás demais) */
+      contactEnd: 0.62,
+      /** onde o pé toca o chão, no espaço do bodyPivot (−X = lado do peito) */
+      plantX: -0.22,
+      plantZ: 0.06,
+      /** o pé solta quando fica mais para trás que isso (antes de a perna esticar demais) */
+      strokeMinZ: -0.4,
+      liftReach: 0.1,
+      liftRecover: 0.16,
+      /** entrada e saída da pose de remada, como fração do ciclo */
+      envelopeIn: 0.18,
+      envelopeOut: 0.22,
+      /** pausa entre remadas: nenhuma parado, até isso na velocidade máxima de remada */
+      maxGap: 1.2,
+      /** quão rápido a pose e o pé acompanham (e voltam, se a remada for interrompida) */
+      followDamping: 20,
+      /** pé da frente gira para apontar para o nose; o de trás aponta para a frente no chão */
+      frontToeYaw: MathUtils.degToRad(65),
+      backToeYaw: MathUtils.degToRad(80),
+      /** de frente para o nose, os joelhos dobram para a frente */
+      kneePoleF: [-0.3, 0, 1] as Vec3Tuple,
+      kneePoleB: [-0.2, 0, 1] as Vec3Tuple,
+      /** acima do pé, até onde um topo de caixa conta como chão para o pé que rema */
+      groundTolerance: 0.1,
+    },
+
+    /** Visual dos flips e do agachamento antes do pop. */
+    tricks: {
+      /** o shape sobe em direção aos pés enquanto gira */
+      boardLift: 0.12,
+      /** os pés sobem e soltam do shape durante o giro */
+      footLift: 0.14,
+      /** entrada e saída dos pés soltos, como fração do flip */
+      envIn: 0.15,
+      envOut: 0.2,
+      /** quanto da pose de agachamento entra ao segurar o pop */
+      crouchWeight: 0.8,
+      crouchDamping: 14,
+    },
+
+    /** HUD de pontuação */
+    hud: {
+      /** quanto tempo o nome da manobra fica na tela (s) */
+      trickTime: 1.6,
+      /** quanto tempo o resultado da linha (+pontos ou BAIL) fica na tela (s) */
+      lineTime: 2.2,
+      bestKey: 'sk8ordie.bestLine',
     },
 
     /** faíscas do grind */

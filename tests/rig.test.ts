@@ -33,7 +33,7 @@ describe('solveTwoBoneIK', () => {
 });
 
 describe('computeJoints', () => {
-  for (const name of ['base', 'landing', 'air', 'grind'] as const) {
+  for (const name of ['base', 'landing', 'air', 'grind', 'push'] as const) {
     it(`pose ${name}: ossos com o comprimento do rig`, () => {
       const j = computeJoints({ pose: rig.poses[name], ankleF, ankleB, curveT: 0 }, rig, createJoints());
       expect(j.hipF.distanceTo(j.kneeF)).toBeCloseTo(rig.thigh, 6);
@@ -55,6 +55,20 @@ describe('computeJoints', () => {
     expect(j.head.y).toBeGreaterThan(1.45);
     expect(j.head.y).toBeLessThan(1.7);
     expect(j.kneeF.x).toBeLessThan(j.hip.x); // joelhos flexionados para o peito
+  });
+
+  it('remada: o pé de trás alcança o chão ao lado do shape e o joelho dobra para o pole dado', () => {
+    const push = CONFIG.visual.push;
+    const deckTop = 2 * CONFIG.visual.wheels.radius + CONFIG.visual.board.truckHeight + CONFIG.visual.board.thickness;
+    const plant = new Vector3(push.plantX, rig.ankleHeight - deckTop, push.plantZ);
+    const poleB = new Vector3().fromArray(push.kneePoleB);
+    const j = computeJoints(
+      { pose: rig.poses.push, ankleF, ankleB: plant, curveT: 0, poleB },
+      rig,
+      createJoints(),
+    );
+    expect(j.ankleB.distanceTo(plant)).toBeLessThan(1e-6); // alcançável sem esticar demais
+    expect(j.kneeB.z).toBeGreaterThan((j.hipB.z + j.ankleB.z) / 2); // joelho para a frente
   });
 
   it('na curva as mãos sobem', () => {

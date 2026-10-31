@@ -37,6 +37,7 @@ const UP = new Vector3(0, 1, 0);
 const tmp = new Vector3();
 const tmp2 = new Vector3();
 const tmpQ = new Quaternion();
+const tmpQ2 = new Quaternion();
 const tmpM = new Matrix4();
 const tmpM2 = new Matrix4();
 const ONE = new Vector3(1, 1, 1);
@@ -158,6 +159,13 @@ export class SkaterView {
   private returnDuration = 0;
   private returnArc = 0;
 
+  // flips e agachamento antes do pop
+  private flipEnv = 0;
+  private crouchAmount = 0;
+  private readonly flipQuat = new Quaternion();
+  private readonly flipCenter = new Vector3();
+  private readonly flipAxisY = new Quaternion();
+
   private readonly sparkDir = new Vector3();
   /** Quanto o shape desce no grind para os trucks (50-50) ou o meio do shape (boardslide) tocarem o trilho. */
   private readonly drop5050: number;
@@ -177,6 +185,27 @@ export class SkaterView {
   private seenLandings = 0;
   private seenGrinds = 0;
   private seenBails = 0;
+
+  // remada
+  private pushActive = false;
+  private pushTime = 0;
+  private pushCooldown = 0;
+  private pushEnv = 0;
+  private pushFootWeight = 0;
+  private pushPlanted = false;
+  private pushReleased = false;
+  private pushReleaseU = 1;
+  private readonly pushFoot = new Vector3();
+  private readonly plantWorld = new Vector3();
+  private readonly pushReleaseFrom = new Vector3();
+  private readonly pushFrontToe = new Quaternion();
+  private readonly pushBackToe = new Quaternion();
+  private readonly restPoleF = new Vector3();
+  private readonly restPoleB = new Vector3();
+  private readonly pushPoleF = new Vector3();
+  private readonly pushPoleB = new Vector3();
+  private readonly poleF = new Vector3();
+  private readonly poleB = new Vector3();
 
   constructor(
     private readonly visual: VisualConfig,
@@ -255,6 +284,13 @@ export class SkaterView {
     this.baseAnkleF.set(rig.ankleX, rig.ankleHeight, rig.stanceHalf);
     this.baseAnkleB.set(rig.ankleX, rig.ankleHeight, -rig.stanceHalf);
     this.frontToe.setFromAxisAngle(UP, rig.frontToeYaw);
+    const push = visual.push;
+    this.pushFrontToe.setFromAxisAngle(UP, push.frontToeYaw);
+    this.pushBackToe.setFromAxisAngle(UP, push.backToeYaw);
+    this.restPoleF.set(rig.kneePoleX, 0, rig.kneePoleZ);
+    this.restPoleB.set(rig.kneePoleX, 0, -rig.kneePoleZ);
+    this.pushPoleF.fromArray(push.kneePoleF);
+    this.pushPoleB.fromArray(push.kneePoleB);
 
     // pivô do corpo no topo do shape: o lean gira em torno dos pés
     const deckTop = 2 * w.radius + b.truckHeight + b.thickness;
@@ -288,6 +324,12 @@ export class SkaterView {
     this.lastRenderYaw = sim.yaw;
     this.mode = 'attached';
     this.attachBoard();
+    this.pushActive = false;
+    this.pushCooldown = 0;
+    this.pushEnv = 0;
+    this.pushFootWeight = 0;
+    this.flipEnv = 0;
+    this.crouchAmount = 0;
     this.sparks.clear();
   }
 
@@ -337,6 +379,7 @@ export class SkaterView {
     this.boardLean.rotation.z = this.lean * j.boardLeanFactor;
     // rotação negativa em X levanta o nariz (+Z)
     this.popPivot.rotation.x = -j.popAngle * pulse(this.popTime, j.popDuration);
+    if (this.mode === 'attached') this.applyFlip(sim);
     this.root.updateMatrixWorld(true);
     this.bodyPivot.getWorldQuaternion(this.pivotQuatInv).invert();
 
@@ -374,23 +417,161 @@ export class SkaterView {
     const j = this.visual.juice;
     const rig = this.visual.rig;
 
-    // mistura das poses-chave: base → ar → grind → aterrissagem
+    // pés presos ao shape (seguem o nose pop e o lean); sem o shape no pé, ficam na base
+    // no flip os pés soltam do shape (que está girando) e sobem um pouco
+    const footLock = this.mode === 'attached' ? 1 - this.flipEnv : 0;
+    this.footTarget(this.footMarkerF, this.baseAnkleF, footLock, this.ankleF);
+    this.footTarget(this.footMarkerB, this.baseAnkleB, footLock, this.ankleB);
+    const lift = this.visual.tricks.footLift * this.flipEnv;
+    this.ankleF.y += lift;
+    this.ankleB.y += lift;
+
+    // remada: atualiza o ciclo antes das poses (ele parte do pé de trás no shape)
+    this.updatePush(sim, dt);
+
+    // mistura das poses-chave: base → ar → grind → remada → aterrissagem
     this.airWeight = MathUtils.damp(this.airWeight, sim.state === 'AIRBORNE' ? 1 : 0, rig.airDamping, dt);
     this.grindWeight = MathUtils.damp(this.grindWeight, grinding ? 1 : 0, rig.grindDamping, dt);
     const poses = rig.poses;
     lerpPose(this.pose, poses.base, poses.air, this.airWeight);
     lerpPose(this.pose, this.pose, poses.grind, this.grindWeight);
-    lerpPose(this.pose, this.pose, poses.landing, pulse(this.crouchTime, j.landCrouchDuration));
+    lerpPose(this.pose, this.pose, poses.push, this.pushEnv);
+    // agachar segurando o pop usa a mesma pose da aterrissagem
+    const vt = this.visual.tricks;
+    this.crouchAmount = MathUtils.damp(this.crouchAmount, sim.crouching ? 1 : 0, vt.crouchDamping, dt);
+    const crouch = Math.max(pulse(this.crouchTime, j.landCrouchDuration), this.crouchAmount * vt.crouchWeight);
+    lerpPose(this.pose, this.pose, poses.landing, crouch);
 
-    // pés presos ao shape (seguem o nose pop e o lean); sem o shape no pé, ficam na base
-    const footLock = this.mode === 'attached' ? 1 : 0;
-    this.footTarget(this.footMarkerF, this.baseAnkleF, footLock, this.ankleF);
-    this.footTarget(this.footMarkerB, this.baseAnkleB, footLock, this.ankleB);
+    // o pé que rema sai do shape; de frente para o nose, os joelhos dobram para a frente
+    this.ankleB.lerp(this.pushFoot, this.pushFootWeight);
+    this.poleF.lerpVectors(this.restPoleF, this.pushPoleF, this.pushEnv);
+    this.poleB.lerpVectors(this.restPoleB, this.pushPoleB, this.pushEnv);
 
     const curveT = MathUtils.clamp(Math.abs(this.lean) / j.leanMax, 0, 1);
-    computeJoints({ pose: this.pose, ankleF: this.ankleF, ankleB: this.ankleB, curveT }, rig, this.anim.joints);
-    this.shoeOrientation(this.footMarkerF, footLock, this.anim.shoeF).multiply(this.frontToe);
-    this.shoeOrientation(this.footMarkerB, footLock, this.anim.shoeB);
+    computeJoints(
+      { pose: this.pose, ankleF: this.ankleF, ankleB: this.ankleB, curveT, poleF: this.poleF, poleB: this.poleB },
+      rig,
+      this.anim.joints,
+    );
+    // pé da frente gira para o nose na remada; o de trás aponta para a frente quando está no chão
+    tmpQ2.slerpQuaternions(this.frontToe, this.pushFrontToe, this.pushEnv);
+    this.shoeOrientation(this.footMarkerF, footLock, this.anim.shoeF).multiply(tmpQ2);
+    this.shoeOrientation(this.footMarkerB, footLock, this.anim.shoeB).slerp(this.pushBackToe, this.pushFootWeight);
+  }
+
+  // ------------------------------------------------------------------- flips
+
+  /**
+   * Gira o shape conforme o flip da sim: voltas no eixo longo (flip) e meias-voltas em Y (shove),
+   * em torno do centro do shape, subindo um pouco. Sem flip, o shape fica preso no pé.
+   */
+  private applyFlip(sim: SkaterSim): void {
+    const vt = this.visual.tricks;
+    const trick = sim.trick;
+    if (!trick) {
+      this.flipEnv = 0;
+      this.attachBoard();
+      return;
+    }
+    const def = sim.cfg.tricks.catalog[trick.id];
+    const e = smoothstep(sim.trickProgress);
+    this.flipEnv = Math.min(1, e / vt.envIn) * Math.min(1, (1 - e) / vt.envOut);
+
+    this.flipAxisY.setFromAxisAngle(UP, def.shove * Math.PI * e);
+    this.flipQuat.setFromAxisAngle(tmp2.set(0, 0, 1), def.flip * 2 * Math.PI * e).premultiply(this.flipAxisY);
+    // gira em torno do centro do shape (a origem do deck fica no chão)
+    this.flipCenter.set(0, this.board.halfY, 0);
+    this.deck.position
+      .copy(this.deckAttached)
+      .add(this.flipCenter)
+      .sub(tmp.copy(this.flipCenter).applyQuaternion(this.flipQuat));
+    this.deck.position.y += vt.boardLift * this.flipEnv;
+    this.deck.quaternion.copy(this.flipQuat);
+  }
+
+  // ------------------------------------------------------------------- remada
+
+  /**
+   * Ciclo da remada. Ida: o pé de trás sai do shape num arco até o chão, do lado do peito.
+   * Contato: fica cravado no asfalto (em espaço de mundo) enquanto o shape passa. Volta: arco
+   * de volta para o tail. A pose de remada entra e sai junto com o ciclo.
+   */
+  private updatePush(sim: SkaterSim, dt: number): void {
+    const p = this.visual.push;
+    const canPush = this.mode === 'attached' && sim.state === 'GROUNDED' && !sim.fakie;
+    this.pushCooldown = Math.max(0, this.pushCooldown - dt);
+
+    if (!canPush) this.pushActive = false;
+    if (canPush && !this.pushActive && sim.pushing && this.pushCooldown <= 0) {
+      this.pushActive = true;
+      this.pushTime = 0;
+      this.pushPlanted = false;
+      this.pushReleased = false;
+      this.pushReleaseU = p.contactEnd;
+    }
+
+    let envTarget = 0;
+    let footTarget = 0;
+    if (this.pushActive) {
+      this.pushTime += dt;
+      const u = this.pushTime / p.cycleDuration;
+      if (u >= 1) {
+        this.pushActive = false;
+        // perto da velocidade máxima, rema de vez em quando, só para manter o embalo
+        this.pushCooldown = p.maxGap * MathUtils.clamp(sim.speed / this.simCfg.maxPushSpeed, 0, 1) ** 2;
+      } else {
+        envTarget = smoothstep(u / p.envelopeIn) * (1 - smoothstep((u - (1 - p.envelopeOut)) / p.envelopeOut));
+        footTarget = 1;
+        this.pushFootAt(u, sim);
+      }
+    }
+
+    this.pushEnv = MathUtils.damp(this.pushEnv, envTarget, p.followDamping, dt);
+    this.pushFootWeight = MathUtils.damp(this.pushFootWeight, footTarget, p.followDamping, dt);
+  }
+
+  /** Posição do pé que rema (espaço do bodyPivot) na fração `u` do ciclo. */
+  private pushFootAt(u: number, sim: SkaterSim): void {
+    const p = this.visual.push;
+
+    if (u < p.reachEnd) {
+      const s = u / p.reachEnd;
+      this.plantPoint(sim, tmp2);
+      this.pushFoot.lerpVectors(this.ankleB, tmp2, smoothstep(s));
+      this.pushFoot.y += p.liftReach * Math.sin(Math.PI * s);
+      return;
+    }
+
+    if (u < this.pushReleaseU) {
+      if (!this.pushPlanted) {
+        // crava o pé no chão: daqui até soltar ele não se mexe no mundo
+        this.plantPoint(sim, tmp2);
+        this.bodyPivot.localToWorld(this.plantWorld.copy(tmp2));
+        this.pushPlanted = true;
+      }
+      this.bodyPivot.worldToLocal(this.pushFoot.copy(this.plantWorld));
+      // ficou para trás demais: solta antes do fim do contato
+      if (this.pushFoot.z < p.strokeMinZ) this.pushReleaseU = u;
+      return;
+    }
+
+    if (!this.pushReleased) {
+      this.pushReleaseFrom.copy(this.pushFoot);
+      this.pushReleased = true;
+    }
+    const s = (u - this.pushReleaseU) / (1 - this.pushReleaseU);
+    this.pushFoot.lerpVectors(this.pushReleaseFrom, this.ankleB, smoothstep(s));
+    this.pushFoot.y += p.liftRecover * Math.sin(Math.PI * s);
+  }
+
+  /** Onde o pé pisa: ao lado do shape, na altura do chão de verdade (pode ser o topo de uma caixa). */
+  private plantPoint(sim: SkaterSim, out: Vector3): Vector3 {
+    const p = this.visual.push;
+    const rig = this.visual.rig;
+    this.bodyPivot.localToWorld(out.set(p.plantX, 0, p.plantZ));
+    const ground = sim.world.groundHeightAt(out.x, out.z, this.root.position.y + p.groundTolerance);
+    out.y = ground + rig.ankleHeight;
+    return this.bodyPivot.worldToLocal(out);
   }
 
   // ------------------------------------------------------------------- tombo

@@ -5,7 +5,8 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 ## O que dá para fazer hoje
 
 - **Remar, frear e virar.** A velocidade sempre segue o shape, sem derrapar, e o corpo inclina para dentro da curva.
-- **Ollie.** Tem *coyote time* (ainda dá para pular logo depois de sair de uma borda) e *jump buffer* (o pulo apertado pouco antes de pousar vale).
+- **Flip tricks e pontuação** com multiplicador por variedade, como no Skate 3 (ver abaixo).
+- **Ollie e nollie.** Tem *coyote time* (ainda dá para pular logo depois de sair de uma borda) e *jump buffer* (o pulo apertado pouco antes de pousar vale).
 - **Giro no ar.** Pousa limpo de frente ou de costas; de costas, segue andando de **fakie**. Só cai quem pousa atravessado.
 - **Grind** nos corrimões e nas bordas dos caixotes, ledges e manual pads:
   - shape alinhado ao trilho → **50-50**;
@@ -20,10 +21,35 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 | ↑ | remar |
 | ↓ | frear |
 | ← / → | virar (no chão) · girar (no ar) |
-| Espaço | ollie (no chão ou para sair do grind) |
+| segurar e soltar **Espaço** | ollie (quanto mais segura, mais alto) |
+| segurar e soltar **Q** | nollie |
 | R | voltar ao início |
 
+**Flips** (inspirados no Flick-It do Skate 3): segure **A/D/S/W** enquanto solta o Espaço ou o Q.
+
+| Teclas | Manobra |
+|---|---|
+| A | Kickflip |
+| D | Heelflip |
+| S | Pop Shove-it |
+| W | FS Shove-it |
+| A + S | Varial Kickflip |
+| D + W | Varial Heelflip |
+| A + W | Hardflip |
+| D + S | Inward Heelflip |
+| A duas vezes / D duas vezes | Double Kickflip / Double Heelflip |
+| S duas vezes | 360 Shove-it |
+| S duas vezes + A | 360 Flip |
+
+- **Late flip:** aperte A/D/S/W logo depois de sair do chão, sem agachar.
+- **Catch:** se o flip não terminar antes de pousar, o skater cai.
+- **Giros:** girar o corpo no ar com ←/→ soma ao nome da manobra (FS/BS 180, 360…).
+
 Para trilhar: dê ollie e caia sobre um corrimão ou sobre a borda de um obstáculo, chegando quase paralelo a ele.
+
+### Pontuação
+
+Cada manobra pousada soma pontos à **linha**. O multiplicador é o número de manobras **diferentes** da linha, e repetir a mesma rende metade a cada vez. A linha fecha e entra no total depois de ~1 s rolando sem manobra; **cair zera a linha**. O recorde de linha fica salvo no navegador.
 
 ## Como rodar localmente
 

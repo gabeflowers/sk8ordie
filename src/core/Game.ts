@@ -1,6 +1,7 @@
 import { Color, PCFShadowMap, Scene, WebGLRenderer } from 'three';
 import { CONFIG } from '../config';
 import { ChaseCamera, type ChaseTarget } from '../render/ChaseCamera';
+import { Hud } from '../render/Hud';
 import { SkaterView } from '../render/SkaterView';
 import { WorldView } from '../render/WorldView';
 import { worldDef } from '../sim/layout';
@@ -19,6 +20,7 @@ export class Game {
   private readonly worldView: WorldView;
   private readonly skaterView: SkaterView;
   private readonly chase: ChaseCamera;
+  private readonly hud: Hud;
   private readonly stepper = new FixedStepper(CONFIG.loop);
   private lastTime: number | null = null;
 
@@ -39,7 +41,8 @@ export class Game {
     this.skaterView = new SkaterView(v, CONFIG.sim);
     this.scene.add(this.skaterView.root, this.skaterView.sparks.mesh);
     this.chase = new ChaseCamera(CONFIG.camera, CONFIG.sim);
-    this.input = new Input(window);
+    this.input = new Input(CONFIG.sim.tricks, window);
+    this.hud = new Hud(container, v.hud);
   }
 
   start(): void {
@@ -68,6 +71,7 @@ export class Game {
 
     const frameDt = Math.min(dt, CONFIG.loop.maxFrameDt);
     this.skaterView.update(this.sim, alpha, frameDt);
+    this.hud.update(this.sim.score, frameDt);
     this.chase.update(frameDt, this.chaseTarget());
     this.worldView.update(this.skaterView.renderPosition, this.chase.camera);
     this.renderer.render(this.scene, this.chase.camera);
