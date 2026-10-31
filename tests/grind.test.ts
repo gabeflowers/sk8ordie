@@ -82,10 +82,12 @@ describe('layout: segmentos de grind', () => {
     expect(lengths).toEqual([2, 2, 6, 6]);
   });
 
-  it('o mapa: corrimões + 4 arestas por caixa (crates, ledges e pads); postes não', () => {
+  it('o mapa: corrimões + 4 arestas por caixa + coping dos quarter pipes; postes não', () => {
     const w = CONFIG.world;
-    expect(grindRails(w)).toHaveLength(w.rails.length + 4 * w.boxes.length);
-    expect(new World(worldDef(w)).grindSegments).toHaveLength(w.rails.length + 4 * w.boxes.length);
+    const copings = w.ramps.filter((r) => r.profile === 'quarter').length;
+    const expected = w.rails.length + 4 * w.boxes.length + copings;
+    expect(grindRails(w)).toHaveLength(expected);
+    expect(new World(worldDef(w)).grindSegments).toHaveLength(expected);
   });
 
   it('a AABB do corrimão colide mas não é chão', () => {
@@ -325,11 +327,11 @@ describe('GRINDING: não engata', () => {
   });
 
   it('alto demais: o ollie passa por cima de um corrimão baixo e curto', () => {
-    const sim = ollieFrom(0, 0, 0, 7, { rails: [{ x: 0, z: 2, length: 2, axis: 'z', top: 0.3 }] });
+    const sim = ollieFrom(0, 0, 0, 7, { rails: [{ x: 0, z: 1, length: 1, axis: 'z', top: 0.2 }] });
     runUntil(sim, notAirborne, 2);
     expect(sim.state).toBe('GROUNDED');
     expect(sim.grindCount).toBe(0);
-    expect(sim.position.z).toBeGreaterThan(3.5);
+    expect(sim.position.z).toBeGreaterThan(2.2);
   });
 
   it('pé acima da janela não engata; engata quando entra nela', () => {

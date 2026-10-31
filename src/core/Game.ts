@@ -71,7 +71,7 @@ export class Game {
 
     const frameDt = Math.min(dt, CONFIG.loop.maxFrameDt);
     this.skaterView.update(this.sim, alpha, frameDt);
-    this.hud.update(this.sim.score, frameDt, this.sim.manual?.balance ?? null);
+    this.hud.update(this.sim.score, frameDt, this.sim.liveGrind, this.sim.manual?.balance ?? null);
     this.chase.update(frameDt, this.chaseTarget());
     this.worldView.update(this.skaterView.renderPosition, this.chase.camera);
     this.renderer.render(this.scene, this.chase.camera);

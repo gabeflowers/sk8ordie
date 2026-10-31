@@ -43,6 +43,8 @@ export interface RampDef {
   length: number;
   height: number;
   dir: 'x+' | 'x-' | 'z+' | 'z-';
+  /** 'quarter' = transição curva (quarter pipe): airs quase verticais que voltam para a rampa */
+  profile?: 'flat' | 'quarter';
 }
 
 /** Poste de luz; `armYaw` é a direção do braço da luminária (mesma convenção do yaw do skater). */
@@ -101,7 +103,7 @@ const POSES: Record<'base' | 'landing' | 'air' | 'grind' | 'push' | 'grab', Pose
     elbowB: [0.07, -0.26, -0.14], handB: [0.16, -0.23, -0.23],
   },
   landing: {
-    hipX: 0.1, hipY: 0.72, lean: deg(26), twist: deg(10), headYaw: deg(70), headPitch: deg(20),
+    hipX: 0.1, hipY: 0.66, lean: deg(28), twist: deg(10), headYaw: deg(70), headPitch: deg(20),
     elbowF: [-0.1, -0.22, 0.17], handF: [-0.16, -0.14, 0.25],
     elbowB: [0.1, -0.22, -0.16], handB: [0.18, -0.14, -0.25],
   },
@@ -147,6 +149,9 @@ const RAMPS: RampDef[] = [
   // kickers
   { x: 0, z: 30, width: 2.2, length: 1.6, height: 0.45, dir: 'z+' },
   { x: -30, z: 15, width: 2.2, length: 1.6, height: 0.5, dir: 'z+' },
+  // mini-rampa: dois quarter pipes frente a frente com 8 m de chão entre eles
+  { x: -35, z: -40.2, width: 7, length: 2.4, height: 1.5, dir: 'z-', profile: 'quarter' },
+  { x: -35, z: -25.8, width: 7, length: 2.4, height: 1.5, dir: 'z+', profile: 'quarter' },
 ];
 
 // postes colidíveis: 2 sobre as ilhas (manual pads), 2 em áreas livres
@@ -174,7 +179,7 @@ export const CONFIG = {
     turnRateSlow: 2.5,
     turnRateFast: 1.5,
     gravity: 22,
-    ollieVelocity: 6.5,
+    ollieVelocity: 5.8,
     airSpinRate: 6,
     landingTolerance: MathUtils.degToRad(35),
     /** abaixo disso a aterrissagem é limpa em qualquer ângulo */
@@ -191,6 +196,12 @@ export const CONFIG = {
     slopeProbe: 0.2,
     /** quanto da subida da rampa vira impulso vertical no lip e no ollie */
     rampLaunch: 1.4,
+    /** acima dessa inclinação a diferença de altura é degrau, não rampa */
+    maxGroundSlope: 3,
+    /** parado subindo uma rampa mais íngreme que isso, rola para trás (de fakie) */
+    rollbackSlope: 0.05,
+    /** saindo do quarter pipe, quanto da velocidade horizontal sobra (air quase vertical) */
+    vertCarry: 0.06,
     spawnX: 0,
     spawnZ: 0,
     spawnYaw: 0,
@@ -212,6 +223,8 @@ export const CONFIG = {
     grindExitSpeed: 0.75,
     /** desaceleração ao longo do trilho (m/s²) */
     grindFriction: 1.5,
+    /** fração da gravidade que acelera/freia no trilho inclinado (o grind longo segue quase constante) */
+    grindSlopeGravity: 0.35,
 
     /** Manobras (inspiradas no Flick-It do Skate 3, adaptado ao teclado). */
     tricks: {
@@ -227,6 +240,8 @@ export const CONFIG = {
       /** giro do corpo: tolerância (rad) para contar como 180/360/... */
       spinTolerance: MathUtils.degToRad(40),
       ollie: { name: 'Ollie', points: 50 },
+      /** air no quarter pipe sem outra manobra */
+      vertAir: { name: 'Air', points: 150 },
       spinPointsPer180: 150,
       airPointsPerSecond: 80,
       nollieFactor: 1.3,
@@ -237,18 +252,18 @@ export const CONFIG = {
        * (+ = backside), `duration` = tempo da rotação no ar (s).
        */
       catalog: {
-        kickflip: { name: 'Kickflip', points: 300, duration: 0.42, flip: 1, shove: 0 },
-        heelflip: { name: 'Heelflip', points: 300, duration: 0.42, flip: -1, shove: 0 },
-        popShove: { name: 'Pop Shove-it', points: 250, duration: 0.36, flip: 0, shove: 1 },
-        fsShove: { name: 'FS Shove-it', points: 250, duration: 0.36, flip: 0, shove: -1 },
-        varialKickflip: { name: 'Varial Kickflip', points: 500, duration: 0.46, flip: 1, shove: 1 },
-        varialHeelflip: { name: 'Varial Heelflip', points: 500, duration: 0.46, flip: -1, shove: -1 },
-        hardflip: { name: 'Hardflip', points: 600, duration: 0.48, flip: 1, shove: -1 },
-        inwardHeelflip: { name: 'Inward Heelflip', points: 600, duration: 0.48, flip: -1, shove: 1 },
-        treFlip: { name: '360 Flip', points: 800, duration: 0.52, flip: 1, shove: 2 },
-        shove360: { name: '360 Shove-it', points: 550, duration: 0.46, flip: 0, shove: 2 },
-        doubleKickflip: { name: 'Double Kickflip', points: 700, duration: 0.5, flip: 2, shove: 0 },
-        doubleHeelflip: { name: 'Double Heelflip', points: 700, duration: 0.5, flip: -2, shove: 0 },
+        kickflip: { name: 'Kickflip', points: 300, duration: 0.32, flip: 1, shove: 0 },
+        heelflip: { name: 'Heelflip', points: 300, duration: 0.32, flip: -1, shove: 0 },
+        popShove: { name: 'Pop Shove-it', points: 250, duration: 0.27, flip: 0, shove: 1 },
+        fsShove: { name: 'FS Shove-it', points: 250, duration: 0.27, flip: 0, shove: -1 },
+        varialKickflip: { name: 'Varial Kickflip', points: 500, duration: 0.35, flip: 1, shove: 1 },
+        varialHeelflip: { name: 'Varial Heelflip', points: 500, duration: 0.35, flip: -1, shove: -1 },
+        hardflip: { name: 'Hardflip', points: 600, duration: 0.36, flip: 1, shove: -1 },
+        inwardHeelflip: { name: 'Inward Heelflip', points: 600, duration: 0.36, flip: -1, shove: 1 },
+        treFlip: { name: '360 Flip', points: 800, duration: 0.39, flip: 1, shove: 2 },
+        shove360: { name: '360 Shove-it', points: 550, duration: 0.35, flip: 0, shove: 2 },
+        doubleKickflip: { name: 'Double Kickflip', points: 700, duration: 0.38, flip: 2, shove: 0 },
+        doubleHeelflip: { name: 'Double Heelflip', points: 700, duration: 0.38, flip: -2, shove: 0 },
       },
 
       /**
@@ -304,6 +319,8 @@ export const CONFIG = {
       comboTimeout: 1.2,
       /** repetir a mesma manobra na linha rende cada vez menos */
       repeatFactor: 0.5,
+      /** cada manobra única depois da primeira soma isso ao multiplicador (x1, x1,5, x2...) */
+      multiplierStep: 0.5,
       grindBasePoints: 150,
       grindPointsPerSecond: 250,
       /** variações de grind: nome e multiplicador sobre a pontuação do grind */
@@ -330,6 +347,10 @@ export const CONFIG = {
     ramps: RAMPS,
     /** numa rampa, o chão pode subir até isso acima do pé num passo (subir a cunha rápido) */
     rampTolerance: 0.25,
+    /** quarter pipe: a transição sobe bem mais rápido por passo */
+    quarterTolerance: 0.45,
+    /** inclinação máxima da transição curva (no topo, perto do coping) */
+    quarterMaxAngle: MathUtils.degToRad(68),
     /** AABB do corrimão: largura e folga além do comprimento em cada ponta */
     railCollisionWidth: 0.06,
     railEndMargin: 0.025,
@@ -341,15 +362,19 @@ export const CONFIG = {
   },
 
   camera: {
-    camDistance: 5,
-    camHeight: 2.2,
+    camDistance: 3.2,
+    camHeight: 1.5,
     camLookAhead: 2,
     /** altura do ponto olhado acima do pé do skater */
-    camLookHeight: 0.9,
+    camLookHeight: 1,
     camDamping: 6,
     camLookDamping: 12,
-    fovMin: 60,
-    fovMax: 68,
+    fovMin: 65,
+    fovMax: 75,
+    /** no grind a câmera gira para uma vista 3/4 lateral (rad, para o lado de fora do trilho) */
+    grindOrbit: MathUtils.degToRad(50),
+    /** no grind a câmera se afasta um pouco para mostrar o trilho */
+    grindDistance: 3.8,
     near: 0.1,
     far: 300,
     /** no ar, abaixo dessa velocidade a câmera mantém o heading anterior */
@@ -809,8 +834,8 @@ export const CONFIG = {
 
     /** HUD de pontuação */
     hud: {
-      /** quanto tempo o nome da manobra fica na tela (s) */
-      trickTime: 1.6,
+      /** quantas manobras anteriores da linha aparecem acima da atual */
+      stackSize: 3,
       /** quanto tempo o resultado da linha (+pontos ou BAIL) fica na tela (s) */
       lineTime: 2.2,
       bestKey: 'sk8ordie.bestLine',
@@ -840,7 +865,7 @@ export const CONFIG = {
       popAngle: 0.4,
       popDuration: 0.25,
       /** duração da pose de aterrissagem (quadril desce) */
-      landCrouchDuration: 0.2,
+      landCrouchDuration: 0.3,
       /** folga sobre o giro máximo por input antes de tratar como salto de yaw */
       yawSnapMargin: 1.5,
       /** velocidade com que o shape alcança o yaw da sim após um salto (snap/saída do grind) */

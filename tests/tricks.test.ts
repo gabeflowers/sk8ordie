@@ -80,15 +80,15 @@ describe('gesto do teclado → manobra', () => {
 });
 
 describe('pontuação', () => {
-  it('multiplicador = manobras diferentes; repetir rende menos', () => {
+  it('multiplicador sobe a cada manobra diferente; repetir rende menos', () => {
     const s = new Score(cfg.score);
     s.add('Kickflip', 300);
     s.add('Heelflip', 300);
-    expect(s.multiplier).toBe(2);
-    expect(s.lineTotal).toBe(1200);
+    expect(s.multiplier).toBe(1 + cfg.score.multiplierStep);
+    expect(s.lineTotal).toBe(600 * (1 + cfg.score.multiplierStep));
     const again = s.add('Kickflip', 300);
     expect(again.points).toBe(150);
-    expect(s.multiplier).toBe(2);
+    expect(s.multiplier).toBe(1 + cfg.score.multiplierStep);
   });
 
   it('rolando sem manobra a linha fecha e entra no total; bail perde a linha', () => {
@@ -195,7 +195,7 @@ describe('manobras na simulação', () => {
     expect(sim.score.lastTrick?.name).toBe('Kickflip');
     runUntil(sim, (s) => s.state === 'GROUNDED', 4);
     expect(sim.score.line.map((a) => a.name)).toEqual(['Kickflip', '50-50']);
-    expect(sim.score.multiplier).toBe(2);
+    expect(sim.score.multiplier).toBe(1 + cfg.score.multiplierStep);
   });
 
   it('a linha fecha depois de rolar sem manobra', () => {

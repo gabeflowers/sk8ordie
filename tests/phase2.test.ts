@@ -61,7 +61,7 @@ describe('grabs', () => {
     hold(sim, 1, {});
     runUntil(sim, notAirborne, 2);
     expect(sim.score.line.map((a) => a.name).sort()).toEqual(['Kickflip', 'Melon']);
-    expect(sim.score.multiplier).toBe(2);
+    expect(sim.score.multiplier).toBe(1 + cfg.score.multiplierStep);
   });
 });
 

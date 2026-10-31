@@ -3,7 +3,7 @@ import type { SimConfig } from '../config';
 import { findGrindSnap, grindVariant, lockedGrindYaw, railHeightAt, type GrindSegment, type GrindSnap } from './grind';
 import { resolveLanding } from './landing';
 import { EPSILON, forwardFromYaw, headingOf, horizontalSpeed, wrapAngle } from './math';
-import { Score } from './score';
+import { Score, type TrickAward } from './score';
 import { resolveGrab, type GrabId, type PopIntent, type TrickId } from './tricks/gesture';
 import type { GrindRail, GrindType, GrindVariant, InputState, SkaterState } from './types';
 import type { World } from './World';
@@ -82,6 +82,9 @@ export class SkaterSim {
   private slideLock = false;
   private lastTilt = 0;
   private lastSide = 0;
+  /** rodando na transição de um quarter pipe (subindo) */
+  private onQuarter = false;
+  private airVert = false;
   private readonly probe = new Vector3();
 
   private grindSegment: GrindSegment | null = null;
@@ -232,6 +235,12 @@ export class SkaterSim {
     }
     speed = Math.min(speed, c.maxSpeed);
 
+    // parado subindo uma rampa: rola para trás, de fakie
+    if (speed <= 0 && this.groundSlope > c.rollbackSlope && !this.manual) {
+      this.fakie = !this.fakie;
+      this.groundSlope = -this.groundSlope;
+    }
+
     // rodas não derrapam: a velocidade segue sempre o shape
     this.alignVelocity(speed);
 
@@ -253,15 +262,26 @@ export class SkaterSim {
     if (groundY < footY - c.stepTolerance) {
       // o chão sumiu: saiu de uma borda (ou passou pelo lip da rampa e é lançado)
       this.state = 'AIRBORNE';
-      this.velocity.y = Math.max(0, this.speed * this.groundSlope * c.rampLaunch);
+      const vert = this.onQuarter;
+      if (vert) {
+        // saiu pelo coping: air quase vertical, que volta para a transição
+        this.velocity.y = Math.max(0, this.speed * this.groundSlope);
+        this.velocity.x *= c.vertCarry;
+        this.velocity.z *= c.vertCarry;
+      } else {
+        this.velocity.y = Math.max(0, this.speed * this.groundSlope * c.rampLaunch);
+      }
       this.groundSlope = 0;
+      this.onQuarter = false;
       this.coyoteTimer = c.coyoteTime;
       this.endManual(true);
       this.endPowerslide(false);
       this.resetAir(false);
+      this.airVert = vert;
     } else {
       this.position.y = groundY;
       this.groundSlope = this.measureSlope();
+      this.onQuarter = this.groundSlope > c.rollbackSlope && this.world.quarterAt(this.position.x, this.position.z) !== null;
     }
   }
 
@@ -277,7 +297,7 @@ export class SkaterSim {
     const behind = this.world.groundHeightAt(this.probe.x, this.probe.z, this.position.y + c.stepTolerance);
     const rise = this.position.y - behind;
     // degraus (caixas) não são rampa: só conta se a diferença é contínua
-    if (Math.abs(rise) > d) return 0;
+    if (Math.abs(rise) > d * c.maxGroundSlope) return 0;
     return rise / d;
   }
 
@@ -365,15 +385,24 @@ export class SkaterSim {
     this.pendingPop = null;
     // agachar mais = pop mais alto (sem dados de pop, altura máxima)
     // na rampa, a subida soma ao pop
-    const rampLift = this.state === 'GROUNDED' ? Math.max(0, this.speed * this.groundSlope * this.cfg.rampLaunch) : 0;
+    const vert = this.state === 'GROUNDED' && this.onQuarter;
+    const climb = this.state === 'GROUNDED' ? Math.max(0, this.speed * this.groundSlope) : 0;
+    const rampLift = vert ? climb : climb * this.cfg.rampLaunch;
     this.velocity.y = this.cfg.ollieVelocity * MathUtils.lerp(t.minPopFactor, 1, pop ? pop.charge : 1) + rampLift;
+    if (vert) {
+      // pop na transição: sobe reto e volta para a rampa
+      this.velocity.x *= this.cfg.vertCarry;
+      this.velocity.z *= this.cfg.vertCarry;
+    }
     this.groundSlope = 0;
+    this.onQuarter = false;
     this.state = 'AIRBORNE';
     this.jumpBufferTimer = 0;
     this.coyoteTimer = 0;
     this.ollieCount++;
     this.resetAir(true);
     this.airNollie = pop?.nollie ?? false;
+    this.airVert = vert;
     if (pop?.trick) this.startTrick(pop.trick, false);
   }
 
@@ -450,6 +479,7 @@ export class SkaterSim {
 
   /** Começa a rastrear um voo (pop ou saída de borda/trilho). */
   private resetAir(popped: boolean): void {
+    this.airVert = false;
     this.grab = null;
     this.airGrab = null;
     this.airPopped = popped;
@@ -482,12 +512,14 @@ export class SkaterSim {
       const g = t.grabs[grab.id];
       this.score.add(g.name, g.points + t.grabPointsPerSecond * grab.time);
     }
-    if (!flip && spin.degrees === 0 && (!this.airPopped || grab)) {
+    if (!flip && spin.degrees === 0 && !this.airVert && (!this.airPopped || grab)) {
       this.resetAir(false);
       return;
     }
 
-    const core = flip ? flip.name : spin.degrees > 0 || this.airNollie ? '' : t.ollie.name;
+    // air no quarter pipe sem flip/grab ganha o nome "Air" ("FS 180 Air")
+    const vertCore = this.airVert && !grab;
+    const core = flip ? flip.name : vertCore ? t.vertAir.name : spin.degrees > 0 || this.airNollie ? '' : t.ollie.name;
     const name = [
       this.airNollie ? 'Nollie' : this.airFakie ? 'Fakie' : '',
       spin.degrees > 0 ? `${spin.side} ${spin.degrees}` : '',
@@ -498,7 +530,7 @@ export class SkaterSim {
       .join(' ');
 
     let points =
-      (flip ? flip.points : spin.degrees > 0 ? 0 : t.ollie.points) +
+      (flip ? flip.points : vertCore ? t.vertAir.points : spin.degrees > 0 ? 0 : t.ollie.points) +
       t.spinPointsPer180 * (spin.degrees / 180) +
       t.airPointsPerSecond * this.airTime;
     if (this.airNollie) points *= t.nollieFactor;
@@ -557,7 +589,7 @@ export class SkaterSim {
     // corrimão inclinado: a gravidade acelera na descida (e freia na subida)
     const slope = seg.grade * (dir.x * seg.tx + dir.z * seg.tz);
     this.groundSlope = slope;
-    speed = Math.max(0, speed - c.gravity * (slope / Math.hypot(1, slope)) * dt);
+    speed = Math.max(0, speed - c.gravity * c.grindSlopeGravity * (slope / Math.hypot(1, slope)) * dt);
     speed = Math.max(0, speed - c.grindFriction * dt);
     this.velocity.set(dir.x * speed, 0, dir.z * speed);
     this.position.addScaledVector(this.velocity, dt);
@@ -579,13 +611,18 @@ export class SkaterSim {
     this.collideGrinding();
   }
 
+  /** Grind em andamento com os pontos acumulados até agora (o HUD mostra ao vivo). */
+  get liveGrind(): TrickAward | null {
+    if (!this.grindVariant) return null;
+    const sc = this.cfg.score;
+    const v = sc.grindVariants[this.grindVariant];
+    return { name: v.name, points: Math.round((sc.grindBasePoints + sc.grindPointsPerSecond * this.grindTime) * v.factor) };
+  }
+
   /** Sai do trilho para AIRBORNE com vy = 0 (quem chama decide coyote/ollie). */
   private leaveGrind(): void {
-    const sc = this.cfg.score;
-    if (this.grindVariant) {
-      const v = sc.grindVariants[this.grindVariant];
-      this.score.add(v.name, (sc.grindBasePoints + sc.grindPointsPerSecond * this.grindTime) * v.factor);
-    }
+    const live = this.liveGrind;
+    if (live) this.score.add(live.name, live.points);
     this.state = 'AIRBORNE';
     // descendo um corrimão de escada, sai já caindo junto com ele
     this.velocity.y = Math.min(0, this.speed * this.groundSlope);

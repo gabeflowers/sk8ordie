@@ -13,6 +13,9 @@ export interface WorldDef {
   ramps?: readonly RampDef[];
   /** numa rampa, o chão pode subir até isso acima de maxTop (subir a cunha rápido) */
   rampTolerance?: number;
+  /** idem na transição curva do quarter pipe */
+  quarterTolerance?: number;
+  quarterMaxAngle?: number;
 }
 
 /** Rampa pré-calculada: pegada AABB, altura máxima e o eixo/sentido em que sobe. */
@@ -24,7 +27,11 @@ export interface Ramp {
   height: number;
   axis: 'x' | 'z';
   sign: 1 | -1;
+  quarter: boolean;
 }
+
+/** Parâmetro da transição curva: seno do ângulo máximo (o perfil é um arco de círculo). */
+let quarterSin = Math.sin((68 * Math.PI) / 180);
 
 function toRamp(r: RampDef): Ramp {
   const alongX = r.dir.startsWith('x');
@@ -38,6 +45,7 @@ function toRamp(r: RampDef): Ramp {
     height: r.height,
     axis: alongX ? 'x' : 'z',
     sign: r.dir.endsWith('+') ? 1 : -1,
+    quarter: r.profile === 'quarter',
   };
 }
 
@@ -47,7 +55,15 @@ export function rampHeightAt(r: Ramp, x: number, z: number): number {
   const hi = r.axis === 'x' ? r.maxX : r.maxZ;
   const p = r.axis === 'x' ? x : z;
   const t = MathUtils.clamp((p - lo) / (hi - lo), 0, 1);
-  return r.height * (r.sign > 0 ? t : 1 - t);
+  const u = r.sign > 0 ? t : 1 - t;
+  return r.height * rampProfile(r, u);
+}
+
+/** Perfil normalizado (0..1) ao longo da rampa: reto, ou arco de círculo no quarter pipe. */
+export function rampProfile(r: Pick<Ramp, 'quarter'>, u: number): number {
+  if (!r.quarter) return u;
+  const s = quarterSin;
+  return (1 - Math.sqrt(1 - (u * s) ** 2)) / (1 - Math.sqrt(1 - s * s));
 }
 
 function toAabb(b: WorldSolid): Aabb {
@@ -69,8 +85,11 @@ export class World {
   readonly halfSize: number;
   readonly ramps: readonly Ramp[];
   readonly rampTolerance: number;
+  readonly quarterTolerance: number;
 
   constructor(def: WorldDef) {
+    if (def.quarterMaxAngle !== undefined) quarterSin = Math.sin(def.quarterMaxAngle);
+    this.quarterTolerance = def.quarterTolerance ?? 0;
     this.boxes = def.boxes.map(toAabb);
     this.ramps = (def.ramps ?? []).map(toRamp);
     this.rampTolerance = def.rampTolerance ?? 0;
@@ -93,7 +112,7 @@ export class World {
     for (const r of this.ramps) {
       if (x < r.minX || x > r.maxX || z < r.minZ || z > r.maxZ) continue;
       const rh = rampHeightAt(r, x, z);
-      if (rh <= maxTop + this.rampTolerance && rh > h) h = rh;
+      if (rh <= maxTop + (r.quarter ? this.quarterTolerance : this.rampTolerance) && rh > h) h = rh;
     }
     return h;
   }
@@ -116,7 +135,7 @@ export class World {
     for (const r of this.ramps) {
       const cx = MathUtils.clamp(pos.x, r.minX, r.maxX);
       const cz = MathUtils.clamp(pos.z, r.minZ, r.maxZ);
-      if (rampHeightAt(r, cx, cz) <= minWallTop + this.rampTolerance) continue;
+      if (rampHeightAt(r, cx, cz) <= minWallTop + (r.quarter ? this.quarterTolerance : this.rampTolerance)) continue;
       if (this.pushOut(pos, radius, r, outNormal)) hit = true;
     }
 
@@ -164,6 +183,14 @@ export class World {
       outNormal.x += nx;
       outNormal.z += nz;
       return true;
+  }
+
+  /** Quarter pipe sob o ponto (se houver). */
+  quarterAt(x: number, z: number): Ramp | null {
+    for (const r of this.ramps) {
+      if (r.quarter && x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ) return r;
+    }
+    return null;
   }
 
   /** Mantém o círculo dentro do mapa e zera a velocidade no eixo que bateu. */

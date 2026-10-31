@@ -1,4 +1,4 @@
-import type { PoleDef, RailDef, SolidDef, WorldConfig } from '../config';
+import type { PoleDef, RailDef, RampDef, SolidDef, WorldConfig } from '../config';
 import type { GrindRail, WorldSolid } from './types';
 import type { WorldDef } from './World';
 
@@ -93,8 +93,23 @@ export function boxGrindEdges(box: SolidDef): GrindRail[] {
 }
 
 /** Tudo que dá para trilhar: corrimões e as arestas do topo dos obstáculos (crates, ledges, pads). */
-export function grindRails(world: Pick<WorldConfig, 'boxes' | 'rails'>): GrindRail[] {
-  return [...world.rails.map((r, i) => railGrindSegment(r, i)), ...world.boxes.flatMap(boxGrindEdges)];
+/** Coping do quarter pipe: a aresta do topo, ao longo da largura. */
+export function copingSegment(ramp: RampDef): GrindRail {
+  const alongX = ramp.dir.startsWith('x');
+  const sign = ramp.dir.endsWith('+') ? 1 : -1;
+  const lip = (alongX ? ramp.x : ramp.z) + (sign * ramp.length) / 2;
+  const half = ramp.width / 2;
+  return alongX
+    ? { ax: lip, az: ramp.z - half, bx: lip, bz: ramp.z + half, y: ramp.height, kind: 'edge' }
+    : { ax: ramp.x - half, az: lip, bx: ramp.x + half, bz: lip, y: ramp.height, kind: 'edge' };
+}
+
+export function grindRails(world: Pick<WorldConfig, 'boxes' | 'rails'> & { ramps?: readonly RampDef[] }): GrindRail[] {
+  return [
+    ...world.rails.map((r, i) => railGrindSegment(r, i)),
+    ...world.boxes.flatMap(boxGrindEdges),
+    ...(world.ramps ?? []).filter((r) => r.profile === 'quarter').map(copingSegment),
+  ];
 }
 
 /** Definição completa do World a partir do config: `new World(worldDef(CONFIG.world))`. */
@@ -105,5 +120,7 @@ export function worldDef(world: WorldConfig): WorldDef {
     grindRails: grindRails(world),
     ramps: world.ramps,
     rampTolerance: world.rampTolerance,
+    quarterTolerance: world.quarterTolerance,
+    quarterMaxAngle: world.quarterMaxAngle,
   };
 }

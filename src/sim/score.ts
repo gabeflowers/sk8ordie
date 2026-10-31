@@ -34,9 +34,9 @@ export class Score {
 
   constructor(private readonly cfg: ScoreConfig) {}
 
-  /** Multiplicador = número de manobras diferentes na linha. */
+  /** Multiplicador: x1 na primeira manobra, + `multiplierStep` a cada manobra diferente. */
   get multiplier(): number {
-    return Math.max(1, this.counts.size);
+    return 1 + this.cfg.multiplierStep * Math.max(0, this.counts.size - 1);
   }
 
   get lineBase(): number {

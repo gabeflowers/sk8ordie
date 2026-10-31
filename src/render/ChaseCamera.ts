@@ -15,6 +15,11 @@ export class ChaseCamera {
   readonly camera: PerspectiveCamera;
 
   private heading = 0;
+  /** giro extra em volta do skater (vista 3/4 no grind) e o lado escolhido na entrada */
+  private orbit = 0;
+  private orbitSide = 1;
+  private wasGrinding = false;
+  private readonly orbitDir = new Vector3();
   private readonly lookPoint = new Vector3();
   private readonly dir = new Vector3();
   private readonly desiredPos = new Vector3();
@@ -30,6 +35,8 @@ export class ChaseCamera {
   /** Posiciona sem suavização (início e reset). */
   snap(target: ChaseTarget): void {
     this.heading = this.desiredHeading(target);
+    this.orbit = 0;
+    this.wasGrinding = false;
     this.computeDesired(target);
     this.camera.position.copy(this.desiredPos);
     this.lookPoint.copy(this.desiredLook);
@@ -44,6 +51,16 @@ export class ChaseCamera {
     const lookAlpha = 1 - Math.exp(-c.camLookDamping * dt);
 
     this.heading += wrapAngle(this.desiredHeading(target) - this.heading) * alpha;
+
+    const grinding = target.state === 'GRINDING';
+    if (grinding && !this.wasGrinding) {
+      // gira para o lado em que a câmera já está, sem cruzar por trás do skater
+      forwardFromYaw(this.heading, this.dir);
+      const cross = this.dir.z * (this.camera.position.x - target.position.x) - this.dir.x * (this.camera.position.z - target.position.z);
+      this.orbitSide = cross >= 0 ? 1 : -1;
+    }
+    this.wasGrinding = grinding;
+    this.orbit += ((grinding ? c.grindOrbit * this.orbitSide : 0) - this.orbit) * alpha;
     this.computeDesired(target);
 
     this.camera.position.lerp(this.desiredPos, alpha);
@@ -71,7 +88,9 @@ export class ChaseCamera {
   private computeDesired(target: ChaseTarget): void {
     const c = this.cfg;
     forwardFromYaw(this.heading, this.dir);
-    this.desiredPos.copy(target.position).addScaledVector(this.dir, -c.camDistance);
+    forwardFromYaw(this.heading + this.orbit, this.orbitDir);
+    const distance = MathUtils.lerp(c.camDistance, c.grindDistance, c.grindOrbit > 0 ? Math.abs(this.orbit) / c.grindOrbit : 0);
+    this.desiredPos.copy(target.position).addScaledVector(this.orbitDir, -distance);
     this.desiredPos.y += c.camHeight;
     this.desiredLook.copy(target.position).addScaledVector(this.dir, c.camLookAhead);
     this.desiredLook.y += c.camLookHeight;

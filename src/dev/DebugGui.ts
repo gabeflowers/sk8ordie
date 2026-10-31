@@ -40,6 +40,7 @@ const SIM_FOLDERS: Record<string, Partial<Record<keyof typeof CONFIG.sim, Range>
     grindMinSpeed: [0, 6, 0.1],
     grindExitSpeed: [0, 6, 0.05],
     grindFriction: [0, 8, 0.1],
+    grindSlopeGravity: [0, 1, 0.05],
   },
 };
 
@@ -63,6 +64,7 @@ const CAMERA_RANGES: Partial<Record<keyof typeof CONFIG.camera, Range>> = {
   camLookDamping: [0.5, 30, 0.5],
   fovMin: [30, 110, 1],
   fovMax: [30, 110, 1],
+  grindDistance: [1, 15, 0.1],
 };
 
 const JUICE_RANGES: Partial<Record<keyof typeof CONFIG.visual.juice, Range>> = {
@@ -101,6 +103,7 @@ const MANUAL_RANGES: Partial<Record<keyof typeof CONFIG.sim.tricks.manual, Range
 const SCORE_RANGES: Partial<Record<keyof typeof CONFIG.sim.score, Range>> = {
   comboTimeout: [0.2, 4, 0.05],
   repeatFactor: [0, 1, 0.05],
+  multiplierStep: [0, 2, 0.05],
 };
 
 const LIGHT_RANGES: Partial<Record<keyof typeof CONFIG.visual.lights, Range>> = {
