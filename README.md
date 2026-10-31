@@ -5,7 +5,7 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 ## O que dá para fazer hoje
 
 - **Remar, frear e virar.** A velocidade sempre segue o shape, sem derrapar, e o corpo inclina para dentro da curva.
-- **Flip tricks e pontuação** com multiplicador por variedade, como no Skate 3 (ver abaixo).
+- **Flip tricks, grabs, manuals, powerslide e revert**, com pontuação e multiplicador por variedade, como no Skate 3 (ver abaixo).
 - **Ollie e nollie.** Tem *coyote time* (ainda dá para pular logo depois de sair de uma borda) e *jump buffer* (o pulo apertado pouco antes de pousar vale).
 - **Giro no ar.** Pousa limpo de frente ou de costas; de costas, segue andando de **fakie**. Só cai quem pousa atravessado.
 - **Grind** nos corrimões e nas bordas dos caixotes, ledges e manual pads:
@@ -44,6 +44,12 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 - **Late flip:** aperte A/D/S/W logo depois de sair do chão, sem agachar.
 - **Catch:** se o flip não terminar antes de pousar, o skater cai.
 - **Giros:** girar o corpo no ar com ←/→ soma ao nome da manobra (FS/BS 180, 360…).
+
+**Grabs** (no ar, segurando; segure a mão primeiro e depois W/S): **J** = mão da frente (Melon; +W Nosegrab; +S Mute), **L** = mão de trás (Indy; +S Tailgrab; +W Stalefish). Solte antes de pousar, senão é bail. Só dá para pegar o shape depois de o flip terminar.
+
+**Manual:** em velocidade, toque **S** (manual) ou **W** (nose manual), ou pouse segurando S/W. O equilíbrio aparece numa barra e vai ficando mais difícil; corrija com W/S. Dê ollie para sair e continuar a linha.
+
+**Powerslide:** **↓ + ←/→** em velocidade. Logo depois de pousar de costas (fakie), o mesmo comando faz um **revert** e volta a andar de frente.
 
 Para trilhar: dê ollie e caia sobre um corrimão ou sobre a borda de um obstáculo, chegando quase paralelo a ele.
 

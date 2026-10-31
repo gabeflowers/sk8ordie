@@ -51,6 +51,9 @@ export class Input {
       crouch: this.gesture.crouching,
       pop: pop ?? undefined,
       lateTrick: this.gesture.consumeLate(),
+      tap: this.gesture.consumeTap(),
+      tilt: this.gesture.tilt,
+      grab: this.held.has('KeyJ') ? 'front' : this.held.has('KeyL') ? 'back' : null,
     };
   }
 

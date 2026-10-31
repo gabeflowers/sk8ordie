@@ -4,7 +4,7 @@ import { findGrindSnap, lockedGrindYaw, type GrindSegment, type GrindSnap } from
 import { resolveLanding } from './landing';
 import { EPSILON, forwardFromYaw, headingOf, horizontalSpeed, wrapAngle } from './math';
 import { Score } from './score';
-import type { PopIntent, TrickId } from './tricks/gesture';
+import { resolveGrab, type GrabId, type PopIntent, type TrickId } from './tricks/gesture';
 import type { GrindRail, GrindType, InputState, SkaterState } from './types';
 import type { World } from './World';
 
@@ -56,6 +56,12 @@ export class SkaterSim {
   trick: { id: TrickId; t: number; duration: number; late: boolean } | null = null;
   /** Agachado segurando o pop (o visual agacha o skater). */
   crouching = false;
+  /** Manual (nose = nose manual) com equilíbrio em −1..1; fora disso as rodas voltam ao chão. */
+  manual: { nose: boolean; balance: number; vel: number; time: number } | null = null;
+  /** Grab segurado no ar. */
+  grab: { id: GrabId; time: number } | null = null;
+  /** Powerslide em andamento (dir = lado para onde o shape atravessou). */
+  powerslide: { dir: number; time: number } | null = null;
   /** Pontuação da sessão: linha atual, multiplicador, total. */
   readonly score: Score;
 
@@ -67,6 +73,10 @@ export class SkaterSim {
   private airTime = 0;
   private airYaw0 = 0;
   private grindTime = 0;
+  private airGrab: { id: GrabId; time: number } | null = null;
+  private revertTimer = 0;
+  private slideLock = false;
+  private lastTilt = 0;
 
   private grindSegment: GrindSegment | null = null;
   private readonly forward = new Vector3();
@@ -117,6 +127,10 @@ export class SkaterSim {
     this.trick = null;
     this.crouching = false;
     this.pendingPop = null;
+    this.manual = null;
+    this.powerslide = null;
+    this.revertTimer = 0;
+    this.slideLock = false;
     this.resetAir(false);
     this.score.reset();
     this.prevPosition.copy(this.position);
@@ -137,10 +151,18 @@ export class SkaterSim {
       this.airTime += dt;
       if (this.trick) this.trick.t += dt;
       // late flip: bater a tecla logo depois de sair do chão
-      if (input.lateTrick && !this.trick && this.airTime <= this.cfg.tricks.lateWindow) {
+      if (input.lateTrick && !this.trick && !this.grab && this.airTime <= this.cfg.tricks.lateWindow) {
         this.startTrick(input.lateTrick, true);
       }
+      // grab: só depois de o flip terminar; soltar guarda o grab para pontuar no pouso
+      if (input.grab && this.trickCaught()) {
+        if (!this.grab) this.grab = { id: resolveGrab(input.grab, input.tilt ?? 0), time: 0 };
+        this.grab.time += dt;
+      } else if (this.grab) {
+        this.finishGrab();
+      }
     }
+    this.revertTimer = Math.max(0, this.revertTimer - dt);
 
     this.pushing = false;
     switch (this.state) {
@@ -159,7 +181,7 @@ export class SkaterSim {
     }
 
     this.world.clampToBounds(this.position, this.velocity, this.cfg.skaterRadius);
-    this.score.tick(dt, this.state === 'GROUNDED');
+    this.score.tick(dt, this.state === 'GROUNDED' && !this.manual && !this.powerslide);
     this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
     this.coyoteTimer = Math.max(0, this.coyoteTimer - dt);
   }
@@ -168,19 +190,35 @@ export class SkaterSim {
 
   private stepGrounded(input: InputState, dt: number): void {
     const c = this.cfg;
+    const tc = c.tricks;
     const turn = turnAxis(input);
     this.turnInput = turn;
-    this.pushing = input.forward && !input.brake;
+    this.lastTilt = input.tilt ?? 0;
+
+    // revert: logo depois de pousar fakie, ↓ + lado gira 180° e volta a andar de frente
+    if (this.revertTimer > 0 && this.fakie && input.brake && turn !== 0) {
+      this.yaw += Math.PI * turn;
+      this.fakie = false;
+      this.revertTimer = 0;
+      this.slideLock = true;
+      this.score.add(tc.powerslide.revertName, tc.powerslide.revertPoints);
+    }
+    this.updatePowerslide(input, turn, dt);
+    this.updateManual(input, dt);
+    this.pushing = input.forward && !input.brake && !this.manual && !this.powerslide;
 
     let speed = this.speed;
     const speedT = MathUtils.clamp(speed / c.maxSpeed, 0, 1);
-    this.yaw += turn * MathUtils.lerp(c.turnRateSlow, c.turnRateFast, speedT) * dt;
+    const turnScale = this.powerslide ? 0 : this.manual ? tc.manual.turnFactor : 1;
+    this.yaw += turn * MathUtils.lerp(c.turnRateSlow, c.turnRateFast, speedT) * dt * turnScale;
 
     // friction antes do push: segurar ↑ estabiliza exatamente em maxPushSpeed
     speed = Math.max(0, speed - c.rollingFriction * dt);
-    if (input.brake) {
+    if (this.powerslide) {
+      speed = Math.max(0, speed - tc.powerslide.decel * dt);
+    } else if (input.brake) {
       speed = Math.max(0, speed - c.brakeDecel * dt);
-    } else if (input.forward && speed < c.maxPushSpeed) {
+    } else if (this.pushing && speed < c.maxPushSpeed) {
       speed = Math.min(c.maxPushSpeed, speed + c.pushAccel * dt);
     }
     speed = Math.min(speed, c.maxSpeed);
@@ -189,6 +227,9 @@ export class SkaterSim {
     this.alignVelocity(speed);
 
     if (this.jumpBufferTimer > 0) {
+      // ollie para fora do manual/powerslide: eles contam na linha
+      this.endManual(true);
+      this.endPowerslide(true);
       this.ollie();
       this.moveAirborne(dt);
       return;
@@ -205,6 +246,8 @@ export class SkaterSim {
       this.state = 'AIRBORNE';
       this.velocity.y = 0;
       this.coyoteTimer = c.coyoteTime;
+      this.endManual(true);
+      this.endPowerslide(false);
       this.resetAir(false);
     } else {
       this.position.y = groundY;
@@ -215,6 +258,7 @@ export class SkaterSim {
 
   private stepAirborne(input: InputState, dt: number): void {
     const turn = turnAxis(input);
+    this.lastTilt = input.tilt ?? 0;
     this.turnInput = turn;
 
     // gira no próprio eixo; a trajetória não muda
@@ -260,7 +304,8 @@ export class SkaterSim {
 
   private land(): void {
     // não pegou o shape: o flip não terminou a tempo
-    if (!this.trickCaught()) {
+    // não pegou o shape (flip incompleto) ou pousou ainda segurando o grab
+    if (!this.trickCaught() || this.grab) {
       this.bail();
       return;
     }
@@ -273,6 +318,9 @@ export class SkaterSim {
         this.coyoteTimer = 0;
         this.alignVelocity(outcome.speed);
         this.landCount++;
+        if (outcome.fakie) this.revertTimer = this.cfg.tricks.powerslide.revertWindow;
+        // pousar segurando W/S já entra em manual
+        if (this.lastTilt !== 0 && outcome.speed >= this.cfg.tricks.manual.minSpeed) this.startManual(this.lastTilt > 0);
         // jump buffer: SPACE apertado pouco antes de tocar o chão
         if (this.jumpBufferTimer > 0) this.ollie();
         break;
@@ -308,8 +356,70 @@ export class SkaterSim {
     return !this.trick || this.trick.t / this.trick.duration >= this.cfg.tricks.catchThreshold;
   }
 
+  // ---------------------------------------------------------- MANUAL / SLIDE / GRAB
+
+  private startManual(nose: boolean): void {
+    const m = this.cfg.tricks.manual;
+    this.manual = { nose, balance: m.startBalance * (nose ? 1 : -1), vel: 0, time: 0 };
+  }
+
+  /** Entra com S/W no chão; o desequilíbrio cresce sozinho e W/S corrigem. */
+  private updateManual(input: InputState, dt: number): void {
+    const m = this.cfg.tricks.manual;
+    if (!this.manual) {
+      const tap = input.tap;
+      if ((tap === 'S' || tap === 'W') && this.speed >= m.minSpeed && !this.powerslide && !this.crouching) {
+        this.startManual(tap === 'W');
+      }
+      return;
+    }
+    const man = this.manual;
+    const acc =
+      man.balance * m.instability * (1 + m.instabilityGrowth * man.time) + (input.tilt ?? 0) * m.correction - man.vel * m.damping;
+    man.vel += acc * dt;
+    man.balance += man.vel * dt;
+    man.time += dt;
+    if (Math.abs(man.balance) >= 1 || this.speed < m.exitSpeed) this.endManual(true);
+  }
+
+  private endManual(award: boolean): void {
+    const man = this.manual;
+    if (!man) return;
+    const m = this.cfg.tricks.manual;
+    if (award) this.score.add(man.nose ? m.names.nose : m.names.tail, m.points + m.pointsPerSecond * man.time);
+    this.manual = null;
+  }
+
+  private updatePowerslide(input: InputState, turn: number, dt: number): void {
+    const ps = this.cfg.tricks.powerslide;
+    if (!input.brake) this.slideLock = false;
+    const wants = !this.manual && !this.slideLock && input.brake && turn !== 0;
+    if (this.powerslide) {
+      if (wants && this.speed > this.cfg.tricks.manual.exitSpeed) this.powerslide.time += dt;
+      else this.endPowerslide(true);
+    } else if (wants && this.speed >= ps.minSpeed) {
+      this.powerslide = { dir: turn, time: 0 };
+    }
+  }
+
+  private endPowerslide(award: boolean): void {
+    const slide = this.powerslide;
+    if (!slide) return;
+    const ps = this.cfg.tricks.powerslide;
+    if (award && slide.time >= ps.minTime) this.score.add(ps.name, ps.points);
+    this.powerslide = null;
+  }
+
+  /** Soltou o grab no ar: guarda o mais longo do voo para pontuar no pouso. */
+  private finishGrab(): void {
+    if (this.grab && (!this.airGrab || this.grab.time > this.airGrab.time)) this.airGrab = this.grab;
+    this.grab = null;
+  }
+
   /** Começa a rastrear um voo (pop ou saída de borda/trilho). */
   private resetAir(popped: boolean): void {
+    this.grab = null;
+    this.airGrab = null;
     this.airPopped = popped;
     this.airNollie = false;
     this.airFakie = this.fakie;
@@ -332,9 +442,15 @@ export class SkaterSim {
   /** Nomeia e pontua o voo que acabou bem (pouso ou encaixe num trilho). */
   private awardAir(): void {
     const t = this.cfg.tricks;
+    if (this.grab) this.finishGrab();
     const flip = this.trick ? t.catalog[this.trick.id] : null;
     const spin = this.spin();
-    if (!flip && spin.degrees === 0 && !this.airPopped) {
+    const grab = this.airGrab;
+    if (grab) {
+      const g = t.grabs[grab.id];
+      this.score.add(g.name, g.points + t.grabPointsPerSecond * grab.time);
+    }
+    if (!flip && spin.degrees === 0 && (!this.airPopped || grab)) {
       this.resetAir(false);
       return;
     }
@@ -467,6 +583,10 @@ export class SkaterSim {
     if (wallNormal) this.bailNormal.copy(wallNormal);
     else this.bailNormal.set(0, 0, 0);
     this.state = 'BAILED';
+    this.manual = null;
+    this.powerslide = null;
+    this.grab = null;
+    this.airGrab = null;
     this.score.bail();
     this.trick = null;
     this.pendingPop = null;

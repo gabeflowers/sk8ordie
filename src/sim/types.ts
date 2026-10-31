@@ -1,5 +1,5 @@
 import type { SolidDef } from '../config';
-import type { PopIntent, TrickId } from './tricks/gesture';
+import type { FlipKey, GrabHand, PopIntent, TrickId } from './tricks/gesture';
 
 /** Input já abstraído do teclado; a simulação nunca lê o DOM. */
 export interface InputState {
@@ -15,6 +15,12 @@ export interface InputState {
   pop?: PopIntent;
   /** batida de flip sem agachar (late flip, se ainda der tempo no ar) */
   lateTrick?: TrickId | null;
+  /** batida de A/D/S/W sem agachar (no chão, S/W entram em manual) */
+  tap?: FlipKey | null;
+  /** W segurado = +1, S = −1: equilíbrio do manual e variação do grab */
+  tilt?: number;
+  /** J = mão da frente, L = mão de trás (segurando) */
+  grab?: GrabHand | null;
 }
 
 export type SkaterState = 'GROUNDED' | 'AIRBORNE' | 'BAILED' | 'GRINDING';

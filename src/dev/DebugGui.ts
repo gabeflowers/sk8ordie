@@ -90,6 +90,14 @@ const TRICK_RANGES: Partial<Record<keyof typeof CONFIG.sim.tricks, Range>> = {
   catchThreshold: [0.3, 1, 0.01],
 };
 
+const MANUAL_RANGES: Partial<Record<keyof typeof CONFIG.sim.tricks.manual, Range>> = {
+  instability: [0, 10, 0.1],
+  instabilityGrowth: [0, 3, 0.05],
+  correction: [0, 20, 0.1],
+  damping: [0, 6, 0.1],
+  startBalance: [0, 0.6, 0.01],
+};
+
 const SCORE_RANGES: Partial<Record<keyof typeof CONFIG.sim.score, Range>> = {
   comboTimeout: [0.2, 4, 0.05],
   repeatFactor: [0, 1, 0.05],
@@ -163,6 +171,7 @@ export function setupDebugGui(game: Game): GUI {
   const tricks = gui.addFolder('Manobras');
   addRanges(tricks, CONFIG.sim.tricks, TRICK_RANGES);
   addRanges(tricks, CONFIG.sim.score, SCORE_RANGES);
+  addRanges(gui.addFolder('Manual'), CONFIG.sim.tricks.manual, MANUAL_RANGES);
 
   const visual = gui.addFolder('Luz e névoa');
   visual.add(CONFIG.visual, 'debugGrid').name('grid de debug');

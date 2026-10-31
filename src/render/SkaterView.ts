@@ -17,6 +17,7 @@ import {
 import type { SimConfig, VisualConfig } from '../config';
 import { EPSILON, wrapAngle } from '../sim/math';
 import type { SkaterSim } from '../sim/SkaterSim';
+import type { GrabId } from '../sim/tricks/gesture';
 import { BoardBody } from './boardBody';
 import { boneCapsule, merge, paint } from './geometry';
 import { RAGDOLL_JOINTS, Ragdoll, type RagdollJoint, type RagdollPose } from './ragdoll';
@@ -34,6 +35,7 @@ function smoothstep(t: number): number {
 }
 
 const UP = new Vector3(0, 1, 0);
+const FRONT_GRABS = new Set<GrabId>(['melon', 'nosegrab', 'mute']);
 const tmp = new Vector3();
 const tmp2 = new Vector3();
 const tmpQ = new Quaternion();
@@ -166,6 +168,16 @@ export class SkaterView {
   private readonly flipCenter = new Vector3();
   private readonly flipAxisY = new Quaternion();
 
+  // grabs, manual, powerslide
+  private grabEnv = 0;
+  private lastGrab: GrabId | null = null;
+  private readonly grabPoints = new Map<GrabId, Object3D>();
+  private readonly grabTarget = new Vector3();
+  private readonly elbowPoleF = new Vector3();
+  private readonly elbowPoleB = new Vector3();
+  private manualTilt = 0;
+  private slideYaw = 0;
+
   private readonly sparkDir = new Vector3();
   /** Quanto o shape desce no grind para os trucks (50-50) ou o meio do shape (boardslide) tocarem o trilho. */
   private readonly drop5050: number;
@@ -175,6 +187,7 @@ export class SkaterView {
   private yawOffset = 0;
   private lastRenderYaw = 0;
 
+  private frameDt = 0;
   private lean = 0;
   private airWeight = 0;
   private grindWeight = 0;
@@ -284,6 +297,8 @@ export class SkaterView {
     this.baseAnkleF.set(rig.ankleX, rig.ankleHeight, rig.stanceHalf);
     this.baseAnkleB.set(rig.ankleX, rig.ankleHeight, -rig.stanceHalf);
     this.frontToe.setFromAxisAngle(UP, rig.frontToeYaw);
+    this.elbowPoleF.fromArray(visual.tricks.grabElbowPoleF);
+    this.elbowPoleB.fromArray(visual.tricks.grabElbowPoleB);
     const push = visual.push;
     this.pushFrontToe.setFromAxisAngle(UP, push.frontToeYaw);
     this.pushBackToe.setFromAxisAngle(UP, push.backToeYaw);
@@ -330,10 +345,15 @@ export class SkaterView {
     this.pushFootWeight = 0;
     this.flipEnv = 0;
     this.crouchAmount = 0;
+    this.grabEnv = 0;
+    this.lastGrab = null;
+    this.manualTilt = 0;
+    this.slideYaw = 0;
     this.sparks.clear();
   }
 
   update(sim: SkaterSim, alpha: number, dt: number): void {
+    this.frameDt = dt;
     const j = this.visual.juice;
     const rig = this.visual.rig;
 
@@ -353,7 +373,15 @@ export class SkaterView {
     this.grindDrop = MathUtils.damp(this.grindDrop, targetDrop, rig.grindDamping, dt);
     this.root.position.copy(this.renderPosition);
     this.root.position.y -= this.grindDrop;
-    this.root.rotation.y = this.renderYaw + this.yawOffset;
+    // powerslide: skater e shape ficam de lado enquanto escorregam
+    const vt0 = this.visual.tricks;
+    this.slideYaw = MathUtils.damp(
+      this.slideYaw,
+      sim.powerslide ? (sim.powerslide.dir * Math.PI) / 2 : 0,
+      vt0.powerslideDamping,
+      dt,
+    );
+    this.root.rotation.y = this.renderYaw + this.yawOffset + this.slideYaw;
 
     if (sim.ollieCount !== this.seenOllies) {
       this.seenOllies = sim.ollieCount;
@@ -436,6 +464,7 @@ export class SkaterView {
     lerpPose(this.pose, poses.base, poses.air, this.airWeight);
     lerpPose(this.pose, this.pose, poses.grind, this.grindWeight);
     lerpPose(this.pose, this.pose, poses.push, this.pushEnv);
+    lerpPose(this.pose, this.pose, poses.grab, this.grabEnv);
     // agachar segurando o pop usa a mesma pose da aterrissagem
     const vt = this.visual.tricks;
     this.crouchAmount = MathUtils.damp(this.crouchAmount, sim.crouching ? 1 : 0, vt.crouchDamping, dt);
@@ -448,8 +477,23 @@ export class SkaterView {
     this.poleB.lerpVectors(this.restPoleB, this.pushPoleB, this.pushEnv);
 
     const curveT = MathUtils.clamp(Math.abs(this.lean) / j.leanMax, 0, 1);
+    // grab: a mão certa vai até o ponto do shape
+    const grabHand = this.grabHandTarget();
     computeJoints(
-      { pose: this.pose, ankleF: this.ankleF, ankleB: this.ankleB, curveT, poleF: this.poleF, poleB: this.poleB },
+      {
+        pose: this.pose,
+        ankleF: this.ankleF,
+        ankleB: this.ankleB,
+        curveT,
+        poleF: this.poleF,
+        poleB: this.poleB,
+        handTargetF: grabHand === 'front' ? this.grabTarget : undefined,
+        handTargetB: grabHand === 'back' ? this.grabTarget : undefined,
+        handWeightF: grabHand === 'front' ? this.grabEnv : 0,
+        handWeightB: grabHand === 'back' ? this.grabEnv : 0,
+        elbowPoleF: this.elbowPoleF,
+        elbowPoleB: this.elbowPoleB,
+      },
       rig,
       this.anim.joints,
     );
@@ -468,9 +512,11 @@ export class SkaterView {
   private applyFlip(sim: SkaterSim): void {
     const vt = this.visual.tricks;
     const trick = sim.trick;
+    this.updateGrabAndManual(sim);
     if (!trick) {
       this.flipEnv = 0;
       this.attachBoard();
+      this.applyManualAndGrab();
       return;
     }
     const def = sim.cfg.tricks.catalog[trick.id];
@@ -489,6 +535,48 @@ export class SkaterView {
     this.deck.quaternion.copy(this.flipQuat);
   }
 
+  // ------------------------------------------------------- grabs e manual
+
+  private updateGrabAndManual(sim: SkaterSim): void {
+    const vt = this.visual.tricks;
+    const dt = this.frameDt;
+    if (sim.grab) this.lastGrab = sim.grab.id;
+    this.grabEnv = MathUtils.damp(this.grabEnv, sim.grab ? 1 : 0, vt.grabDamping, dt);
+
+    const m = sim.manual;
+    const target = m ? (m.nose ? 1 : -1) * vt.manualAngle * (1 + vt.manualWobble * Math.abs(m.balance)) : 0;
+    this.manualTilt = MathUtils.damp(this.manualTilt, target, vt.manualDamping, dt);
+  }
+
+  /**
+   * Manual: o shape empina sobre o eixo das rodas de trás (manual) ou da frente (nose manual).
+   * Grab: o shape sobe em direção às mãos.
+   */
+  private applyManualAndGrab(): void {
+    const vt = this.visual.tricks;
+    if (Math.abs(this.manualTilt) > EPSILON) {
+      const pivotZ = (this.manualTilt < 0 ? -1 : 1) * this.visual.wheels.axleOffset;
+      this.flipQuat.setFromAxisAngle(tmp2.set(1, 0, 0), this.manualTilt);
+      this.flipCenter.set(0, 0, pivotZ);
+      this.deck.position
+        .copy(this.deckAttached)
+        .add(this.flipCenter)
+        .sub(tmp.copy(this.flipCenter).applyQuaternion(this.flipQuat));
+      this.deck.quaternion.copy(this.flipQuat);
+    }
+    this.deck.position.y += vt.grabBoardLift * this.grabEnv;
+  }
+
+  /** Ponto do shape que a mão do grab alcança (espaço do bodyPivot) e qual mão. */
+  private grabHandTarget(): 'front' | 'back' | null {
+    if (!this.lastGrab || this.grabEnv < EPSILON) return null;
+    const point = this.grabPoints.get(this.lastGrab);
+    if (!point) return null;
+    point.getWorldPosition(this.grabTarget);
+    this.bodyPivot.worldToLocal(this.grabTarget);
+    return FRONT_GRABS.has(this.lastGrab) ? 'front' : 'back';
+  }
+
   // ------------------------------------------------------------------- remada
 
   /**
@@ -498,7 +586,7 @@ export class SkaterView {
    */
   private updatePush(sim: SkaterSim, dt: number): void {
     const p = this.visual.push;
-    const canPush = this.mode === 'attached' && sim.state === 'GROUNDED' && !sim.fakie;
+    const canPush = this.mode === 'attached' && sim.state === 'GROUNDED' && !sim.fakie && !sim.manual && !sim.powerslide;
     this.pushCooldown = Math.max(0, this.pushCooldown - dt);
 
     if (!canPush) this.pushActive = false;
@@ -781,6 +869,16 @@ export class SkaterView {
     this.footMarkerB.position.set(rig.ankleX, deckTop + rig.ankleHeight, -rig.stanceHalf);
 
     this.deck.add(deckMesh, wheels, this.footMarkerF, this.footMarkerB);
+
+    // pontos onde as mãos pegam o shape nos grabs
+    const points = this.visual.tricks.grabPoints;
+    for (const id of Object.keys(points) as GrabId[]) {
+      const marker = new Object3D();
+      marker.position.fromArray(points[id]);
+      marker.position.y += deckTop;
+      this.deck.add(marker);
+      this.grabPoints.set(id, marker);
+    }
     this.popPivot.add(this.deck);
     this.boardLean.add(this.popPivot);
   }

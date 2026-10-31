@@ -17,6 +17,10 @@ const STYLE = `
 .sk8-hud .result { margin-top: 6px; font-size: 28px; font-weight: 700; transition: opacity 0.3s; }
 .sk8-hud .result.banked { color: #ffcf7a; }
 .sk8-hud .result.bail { color: #ff4d4d; }
+.sk8-hud .balance { position: absolute; left: 50%; bottom: 18%; width: 220px; height: 10px; margin-left: -110px;
+  border-radius: 5px; background: rgba(7,11,28,0.7); box-shadow: inset 0 0 0 1px rgba(255,46,136,0.6); transition: opacity 0.2s; }
+.sk8-hud .balance i { position: absolute; top: -4px; width: 4px; height: 18px; margin-left: -2px; border-radius: 2px; background: #fff;
+  box-shadow: 0 0 8px #ff2e88; }
 `;
 
 function fmt(n: number): string {
@@ -30,6 +34,8 @@ export class Hud {
   private readonly trickEl = document.createElement('div');
   private readonly lineEl = document.createElement('div');
   private readonly resultEl = document.createElement('div');
+  private readonly balanceEl = document.createElement('div');
+  private readonly needleEl = document.createElement('i');
   private seenTricks = 0;
   private seenLines = 0;
   private trickTimer = 0;
@@ -50,7 +56,9 @@ export class Hud {
     this.lineEl.className = 'line';
     this.resultEl.className = 'result';
     center.append(this.trickEl, this.lineEl, this.resultEl);
-    this.root.append(style, this.scoreEl, center);
+    this.balanceEl.className = 'balance';
+    this.balanceEl.append(this.needleEl);
+    this.root.append(style, this.scoreEl, center, this.balanceEl);
     container.appendChild(this.root);
     try {
       this.best = Number(window.localStorage.getItem(cfg.bestKey)) || 0;
@@ -59,7 +67,11 @@ export class Hud {
     }
   }
 
-  update(score: Score, dt: number): void {
+  /** `balance`: equilíbrio do manual em −1..1 (null fora do manual). */
+  update(score: Score, dt: number, balance: number | null = null): void {
+    this.balanceEl.style.opacity = balance === null ? '0' : '1';
+    if (balance !== null) this.needleEl.style.left = `${((Math.max(-1, Math.min(1, balance)) + 1) / 2) * 100}%`;
+
     if (score.trickCount !== this.seenTricks) {
       this.seenTricks = score.trickCount;
       const t = score.lastTrick;

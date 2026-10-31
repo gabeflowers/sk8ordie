@@ -38,6 +38,13 @@ export interface RigInput {
   /** Para onde cada joelho dobra; sem isso, o padrão do rig (lado do peito). */
   poleF?: Vector3;
   poleB?: Vector3;
+  /** Mão indo a um alvo (grab): ponto, peso 0..1 e para onde o cotovelo aponta. */
+  handTargetF?: Vector3;
+  handTargetB?: Vector3;
+  handWeightF?: number;
+  handWeightB?: number;
+  elbowPoleF?: Vector3;
+  elbowPoleB?: Vector3;
 }
 
 export function createJoints(): RigJoints {
@@ -125,6 +132,23 @@ function boneFrom(out: Vector3, from: Vector3, d: Vector3, len: number): void {
   out.copy(from).addScaledVector(d.normalize(), len);
 }
 
+const reach = new Vector3();
+const defaultElbowPole = new Vector3(1, 0, 0);
+
+function reachHand(
+  shoulder: Vector3,
+  elbow: Vector3,
+  hand: Vector3,
+  target: Vector3 | undefined,
+  weight: number | undefined,
+  pole: Vector3 | undefined,
+  cfg: RigConfig,
+): void {
+  if (!target || !weight || weight <= 0) return;
+  reach.lerpVectors(hand, target, Math.min(1, weight));
+  solveTwoBoneIK(shoulder, reach, cfg.upperArm, cfg.forearm, pole ?? defaultElbowPole, elbow, hand);
+}
+
 /** Calcula todas as juntas do rig para a pose e os tornozelos dados. */
 export function computeJoints(input: RigInput, cfg: RigConfig, out: RigJoints): RigJoints {
   const p = input.pose;
@@ -161,6 +185,10 @@ export function computeJoints(input: RigInput, cfg: RigConfig, out: RigJoints): 
   boneFrom(out.handF, out.elbowF, dir.set(p.handF[0], p.handF[1] + rise, p.handF[2] * s + spread), cfg.forearm);
   boneFrom(out.elbowB, out.shoulderB, dir.set(p.elbowB[0], p.elbowB[1], p.elbowB[2] * s), cfg.upperArm);
   boneFrom(out.handB, out.elbowB, dir.set(p.handB[0], p.handB[1] + rise, p.handB[2] * s - spread), cfg.forearm);
+
+  // grab: a mão vai até o alvo por IK de 2 ossos (mesmo solver das pernas)
+  reachHand(out.shoulderF, out.elbowF, out.handF, input.handTargetF, input.handWeightF, input.elbowPoleF, cfg);
+  reachHand(out.shoulderB, out.elbowB, out.handB, input.handTargetB, input.handWeightB, input.elbowPoleB, cfg);
 
   return out;
 }

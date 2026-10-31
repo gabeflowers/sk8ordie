@@ -60,7 +60,13 @@ export interface PoseParams {
 const deg = MathUtils.degToRad;
 
 // o bail não tem pose-chave: o corpo vira ragdoll (visual.bail)
-const POSES: Record<'base' | 'landing' | 'air' | 'grind' | 'push', PoseParams> = {
+const POSES: Record<'base' | 'landing' | 'air' | 'grind' | 'push' | 'grab', PoseParams> = {
+  // grab: joelhos no peito, tronco dobrado em direção ao shape (as mãos vão por IK)
+  grab: {
+    hipX: 0.06, hipY: 0.62, lean: deg(40), twist: deg(10), headYaw: deg(55), headPitch: deg(30),
+    elbowF: [-0.1, -0.2, 0.2], handF: [-0.1, -0.2, 0.2],
+    elbowB: [-0.1, -0.2, -0.2], handB: [-0.1, -0.2, -0.2],
+  },
   // remada: vira o tronco para o nose, desce o quadril sobre o pé da frente e deixa os braços soltos
   push: {
     hipX: -0.08, hipY: 0.76, lean: deg(18), twist: deg(70), headYaw: deg(85), headPitch: deg(15),
@@ -204,6 +210,52 @@ export const CONFIG = {
         shove360: { name: '360 Shove-it', points: 550, duration: 0.46, flip: 0, shove: 2 },
         doubleKickflip: { name: 'Double Kickflip', points: 700, duration: 0.5, flip: 2, shove: 0 },
         doubleHeelflip: { name: 'Double Heelflip', points: 700, duration: 0.5, flip: -2, shove: 0 },
+      },
+
+      /**
+       * Grabs: J = mão da frente, L = mão de trás; W/S seguradas escolhem a variação.
+       * Pousar ainda segurando = bail. Pontos: base + tempo segurado.
+       */
+      grabs: {
+        melon: { name: 'Melon', points: 200 },
+        nosegrab: { name: 'Nosegrab', points: 250 },
+        mute: { name: 'Mute', points: 200 },
+        indy: { name: 'Indy', points: 200 },
+        tailgrab: { name: 'Tailgrab', points: 250 },
+        stalefish: { name: 'Stalefish', points: 300 },
+      },
+      grabPointsPerSecond: 300,
+
+      /** Manual (S) e nose manual (W): equilíbrio instável, corrigido com W/S. */
+      manual: {
+        minSpeed: 1.2,
+        /** abaixo disso o manual (e o powerslide) acabam */
+        exitSpeed: 0.6,
+        /** desequilíbrio inicial, para o lado do manual */
+        startBalance: 0.15,
+        /** o desequilíbrio se amplifica (1/s²) e fica mais difícil com o tempo */
+        instability: 3,
+        instabilityGrowth: 0.5,
+        /** aceleração das correções com W/S */
+        correction: 7,
+        damping: 1.5,
+        /** girar em manual é mais lento */
+        turnFactor: 0.5,
+        names: { tail: 'Manual', nose: 'Nose Manual' },
+        points: 150,
+        pointsPerSecond: 200,
+      },
+
+      /** Powerslide (↓ + ←/→ em velocidade) e revert (o mesmo logo depois de pousar fakie). */
+      powerslide: {
+        minSpeed: 3,
+        decel: 9,
+        minTime: 0.25,
+        name: 'Powerslide',
+        points: 150,
+        revertWindow: 0.4,
+        revertName: 'Revert',
+        revertPoints: 200,
       },
     },
 
@@ -658,6 +710,27 @@ export const CONFIG = {
       /** quanto da pose de agachamento entra ao segurar o pop */
       crouchWeight: 0.8,
       crouchDamping: 14,
+      /** grab: o shape sobe até as mãos e o corpo encolhe (pose grab) */
+      grabBoardLift: 0.32,
+      grabDamping: 16,
+      /** cotovelos apontam para fora/para trás ao alcançar o shape */
+      grabElbowPoleF: [0.4, 0, 1] as Vec3Tuple,
+      grabElbowPoleB: [0.4, 0, -1] as Vec3Tuple,
+      /** onde cada mão pega o shape (espaço do shape; −X = lado dos dedos) */
+      grabPoints: {
+        melon: [0.1, 0, 0.08] as Vec3Tuple,
+        nosegrab: [0, 0, 0.36] as Vec3Tuple,
+        mute: [-0.1, 0, 0.08] as Vec3Tuple,
+        indy: [-0.1, 0, -0.06] as Vec3Tuple,
+        tailgrab: [0, 0, -0.36] as Vec3Tuple,
+        stalefish: [0.1, 0, -0.06] as Vec3Tuple,
+      },
+      /** manual: inclinação do shape sobre o eixo das rodas, mais o balanço do equilíbrio */
+      manualAngle: 0.22,
+      manualWobble: 0.5,
+      manualDamping: 14,
+      /** powerslide: o skater e o shape ficam de lado */
+      powerslideDamping: 12,
     },
 
     /** HUD de pontuação */

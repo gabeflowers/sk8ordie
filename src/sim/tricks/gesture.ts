@@ -5,6 +5,17 @@ import type { SimConfig } from '../../config';
 
 export type TrickId = keyof SimConfig['tricks']['catalog'];
 export type FlipKey = 'A' | 'D' | 'S' | 'W';
+export type GrabId = keyof SimConfig['tricks']['grabs'];
+export type GrabHand = 'front' | 'back';
+
+/**
+ * Mão + inclinação (W = +1, S = −1) → grab.
+ * Frente: melon · W nosegrab · S mute. Trás: indy · S tailgrab · W stalefish.
+ */
+export function resolveGrab(hand: GrabHand, tilt: number): GrabId {
+  if (hand === 'front') return tilt > 0 ? 'nosegrab' : tilt < 0 ? 'mute' : 'melon';
+  return tilt < 0 ? 'tailgrab' : tilt > 0 ? 'stalefish' : 'indy';
+}
 
 /** Pop: soltar Espaço (ollie) ou Q (nollie) depois de agachar. */
 export interface PopIntent {
@@ -55,6 +66,7 @@ export class TrickGesture {
   private readonly taps = new Map<FlipKey, number>();
   private pendingPop: PopIntent | null = null;
   private pendingLate: TrickId | null = null;
+  private pendingTap: FlipKey | null = null;
 
   constructor(private readonly cfg: TricksConfig) {}
 
@@ -78,8 +90,9 @@ export class TrickGesture {
     if (this.popKey !== null) {
       this.taps.set(k, (this.taps.get(k) ?? 0) + 1);
     } else {
-      // sem agachar: batida no ar vira late flip (a sim decide se ainda dá tempo)
+      // sem agachar: no ar vira late flip; no chão, S/W entram em manual (a sim decide)
       this.pendingLate = resolveTrick(this.held, new Map(), this.cfg.doubleTap);
+      this.pendingTap = k;
     }
   }
 
@@ -113,11 +126,24 @@ export class TrickGesture {
     return t;
   }
 
+  /** Batida de A/D/S/W sem agachar (uma vez). */
+  consumeTap(): FlipKey | null {
+    const t = this.pendingTap;
+    this.pendingTap = null;
+    return t;
+  }
+
+  /** W segurado = +1, S segurado = −1 (manual, grabs). */
+  get tilt(): number {
+    return (this.held.has('W') ? 1 : 0) - (this.held.has('S') ? 1 : 0);
+  }
+
   clear(): void {
     this.popKey = null;
     this.held.clear();
     this.taps.clear();
     this.pendingPop = null;
     this.pendingLate = null;
+    this.pendingTap = null;
   }
 }
