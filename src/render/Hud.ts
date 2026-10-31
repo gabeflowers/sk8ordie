@@ -9,7 +9,7 @@ const STYLE = `
 .sk8-hud .score { position: absolute; left: 14px; top: 10px; font-size: 15px; letter-spacing: 0.06em; line-height: 1.35;
   text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 .sk8-hud .score b { font-size: 24px; color: #fff; }
-.sk8-hud .line { position: absolute; right: 18px; bottom: 20px; display: flex; align-items: flex-end; gap: 12px;
+.sk8-hud .line { position: absolute; right: 18px; bottom: 72px; display: flex; align-items: flex-end; gap: 12px;
   transition: opacity 0.3s; text-shadow: 0 2px 4px rgba(0,0,0,0.7); }
 .sk8-hud .stack { text-align: right; line-height: 1.1; }
 .sk8-hud .prev { font-size: 14px; color: rgba(231,226,214,0.7); letter-spacing: 0.04em; }
@@ -20,7 +20,7 @@ const STYLE = `
 .sk8-hud .ring { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; flex: none;
   font-size: 18px; font-weight: 700; color: #fff; background: rgba(7,11,28,0.55);
   box-shadow: inset 0 0 0 3px #ff2e88, 0 0 14px rgba(255,46,136,0.6); }
-.sk8-hud .result { position: absolute; right: 18px; bottom: 84px; font-size: 30px; font-weight: 700;
+.sk8-hud .result { position: absolute; right: 18px; bottom: 150px; font-size: 30px; font-weight: 700;
   text-shadow: 0 2px 4px rgba(0,0,0,0.7); transition: opacity 0.3s; }
 .sk8-hud .result.banked { color: #ffcf7a; }
 .sk8-hud .result.bail { color: #ff4d4d; }

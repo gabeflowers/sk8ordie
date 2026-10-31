@@ -16,6 +16,7 @@ import {
 } from 'three';
 import type { BoxDef, PoleDef, RailDef, RampDef, VisualConfig, WorldConfig } from '../config';
 import { forwardFromYaw } from '../sim/math';
+import { quarterCurve } from '../sim/World';
 import { merge, paint, placeYaw } from './geometry';
 
 /** Postes colidíveis + decorativos fora do limite do mapa, com os braços virados para dentro. */
@@ -97,27 +98,56 @@ function railParts(rail: RailDef, visual: VisualConfig): { tube: BufferGeometry;
 const RAMP_YAW: Record<RampDef['dir'], number> = { 'z+': 0, 'z-': Math.PI, 'x+': Math.PI / 2, 'x-': -Math.PI / 2 };
 
 /**
- * Rampa em cunha: rampa inclinada subindo para +Z (local), face vertical no lip e laterais
- * triangulares. Cada face com seus vértices (normais chapadas), indexada para o merge.
+ * Rampa: superfície subindo para +Z (local), face vertical no lip e laterais. Na cunha a
+ * superfície é um plano; no quarter pipe é o mesmo arco da colisão (World.rampProfile), em
+ * fatias com normais suaves. Indexada para o merge.
  */
-function rampParts(ramp: RampDef, visual: VisualConfig): { body: BufferGeometry; lip: BufferGeometry } {
+export function rampParts(ramp: RampDef, world: WorldConfig, visual: VisualConfig): { body: BufferGeometry; lip: BufferGeometry } {
   const w = ramp.width / 2;
   const l = ramp.length / 2;
   const h = ramp.height;
-  const faces: number[][][] = [
-    [[-w, 0, -l], [w, 0, -l], [w, h, l], [-w, h, l]], // rampa
-    [[w, 0, l], [-w, 0, l], [-w, h, l], [w, h, l]], // face do lip
-    [[w, 0, -l], [w, 0, l], [w, h, l]], // lateral +X
-    [[-w, 0, l], [-w, 0, -l], [-w, h, l]], // lateral −X
-  ];
+  const k = visual.kit;
+  const quarter = ramp.profile === 'quarter';
+  const n = quarter ? k.quarterSegments : 1;
+  const maxSin = Math.sin(world.quarterMaxAngle);
+  // perfil (z, y) do pé da rampa até o lip
+  const profile: [number, number][] = [];
+  for (let i = 0; i <= n; i++) {
+    const u = i / n;
+    profile.push([-l + 2 * l * u, h * (quarter ? quarterCurve(u, maxSin) : u)]);
+  }
+
   const positions: number[] = [];
   const index: number[] = [];
-  for (const face of faces) {
-    const base = positions.length / 3;
-    for (const v of face) positions.push(...v);
-    // sentido anti-horário visto de fora (normais para fora)
-    index.push(base, base + 2, base + 1);
-    if (face.length === 4) index.push(base, base + 3, base + 2);
+  const vertex = (x: number, y: number, z: number): number => {
+    positions.push(x, y, z);
+    return positions.length / 3 - 1;
+  };
+  /** uma fileira de vértices ao longo do perfil em x; retorna o índice do primeiro */
+  const row = (x: number): number => {
+    const first = positions.length / 3;
+    for (const [z, y] of profile) vertex(x, y, z);
+    return first;
+  };
+  // sentido anti-horário visto de fora (normais para fora)
+  // superfície: vértices compartilhados entre fatias (normais suaves no arco)
+  const left = row(-w);
+  const right = row(w);
+  for (let i = 0; i < n; i++) index.push(left + i, right + i + 1, right + i, left + i, left + i + 1, right + i + 1);
+  // face do lip
+  const lip = vertex(w, 0, l);
+  vertex(-w, 0, l);
+  vertex(-w, h, l);
+  vertex(w, h, l);
+  index.push(lip, lip + 2, lip + 1, lip, lip + 3, lip + 2);
+  // laterais: leque a partir do canto de baixo do lip
+  const cornerR = vertex(w, 0, l);
+  const sideR = row(w);
+  const cornerL = vertex(-w, 0, l);
+  const sideL = row(-w);
+  for (let i = 0; i < n; i++) {
+    index.push(sideR + i, sideR + i + 1, cornerR);
+    index.push(cornerL, sideL + i + 1, sideL + i);
   }
   const body = new ThreeBufferGeometry();
   body.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3));
@@ -125,11 +155,14 @@ function rampParts(ramp: RampDef, visual: VisualConfig): { body: BufferGeometry;
   body.setIndex(index);
   body.computeVertexNormals();
 
-  const k = visual.kit;
-  const lip = new BoxGeometry(ramp.width, k.copingSize, k.copingSize).translate(0, h - k.copingSize / 2, l - k.copingSize / 2);
+  // coping: tubo no quarter pipe, cantoneira na cunha
+  const c = k.copingSize;
+  const edge = quarter
+    ? new CylinderGeometry(c, c, ramp.width, 8).rotateZ(Math.PI / 2).translate(0, h - c, l - c)
+    : new BoxGeometry(ramp.width, c, c).translate(0, h - c / 2, l - c / 2);
   const at = new Vector3(ramp.x, 0, ramp.z);
   const yaw = RAMP_YAW[ramp.dir];
-  return { body: placeYaw(body, at, yaw), lip: placeYaw(lip, at, yaw) };
+  return { body: placeYaw(body, at, yaw), lip: placeYaw(edge, at, yaw) };
 }
 
 /** Poste de luz: haste, braço e luminária (a luminária vai num material próprio). */
@@ -185,7 +218,7 @@ export function buildKit(world: WorldConfig, visual: VisualConfig): Group {
   for (const c of curbs(world, visual)) solid.push(paint(c, pal.concrete));
 
   for (const ramp of world.ramps) {
-    const { body, lip } = rampParts(ramp, visual);
+    const { body, lip } = rampParts(ramp, world, visual);
     solid.push(paint(body, pal.concrete));
     accent.push(lip);
   }

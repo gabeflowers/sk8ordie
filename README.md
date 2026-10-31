@@ -10,6 +10,8 @@ Jogo de skate 3D arcade para navegador, inspirado em *skate.* (EA). A física é
 - **Giro no ar.** Pousa limpo de frente ou de costas; de costas, segue andando de **fakie**. Só cai quem pousa atravessado.
 - **Grind** nos corrimões (inclusive o inclinado da escadaria) e nas bordas dos caixotes, ledges e manual pads, com 10 variações: 50-50, 5-0, nosegrind, smith, feeble, crooked, boardslide, noseslide, tailslide e lipslide.
 - **Rampas** (kickers e bank) com chão inclinado de verdade: freiam na subida, aceleram na descida e lançam no lip.
+- **Quarter pipes** com transição curva: subindo rápido, sai num **air** quase vertical e volta para a rampa descendo de fakie; devagar, para na transição e desce de costas. O coping também dá grind.
+- **Desafios** (kickflip, manual, feeble, air, x2, 360 flip, linha de 5 manobras, linhas de 3.000 e 10.000) no canto superior esquerdo; o progresso fica salvo no navegador.
 - **Tombo com física.** O corpo vira ragdoll e o shape solta do pé na direção do movimento; depois o skater levanta e o shape volta para o pé.
 - **Painel de tuning** (lil-gui, só em dev). Ajusta física, câmera, luz e animação ao vivo e copia os valores em JSON para colar no `src/config.ts`.
 
@@ -60,11 +62,15 @@ Para trilhar: dê ollie e caia sobre um corrimão ou sobre a borda de um obstác
 | atravessado | — / W / S | Boardslide / Noseslide / Tailslide |
 | atravessado | A ou D | Lipslide |
 
-O mapa tem **escadaria** com corrimão inclinado (sobe pelo bank, desce pelos degraus ou trilhando o corrimão), **kickers** que lançam no lip e banks de chão inclinado.
+O mapa tem **escadaria** com corrimão inclinado (sobe pelo bank, desce pelos degraus ou trilhando o corrimão), **kickers** que lançam no lip, banks de chão inclinado e uma **mini-rampa** com dois quarter pipes frente a frente.
 
 ### Pontuação
 
-Cada manobra pousada soma pontos à **linha**. O multiplicador é o número de manobras **diferentes** da linha, e repetir a mesma rende metade a cada vez. A linha fecha e entra no total depois de ~1 s rolando sem manobra; **cair zera a linha**. O recorde de linha fica salvo no navegador.
+Cada manobra pousada soma pontos à **linha**. O multiplicador começa em x1 e sobe **0,5** a cada manobra **diferente** da linha (x1,5, x2…); repetir a mesma rende metade a cada vez. O grind conta pontos ao vivo enquanto você trilha. A linha fecha e entra no total depois de ~1 s rolando sem manobra; **cair zera a linha**. O recorde de linha fica salvo no navegador.
+
+No canto inferior direito, o HUD mostra as manobras anteriores da linha, a atual em destaque, os pontos, o anel do multiplicador e o total da linha.
+
+Os tempos de pop, flip, pouso, a câmera e o grind foram calibrados a partir de um vídeo de referência de gameplay medido quadro a quadro.
 
 ## Como rodar localmente
 

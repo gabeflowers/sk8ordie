@@ -61,9 +61,12 @@ export function rampHeightAt(r: Ramp, x: number, z: number): number {
 
 /** Perfil normalizado (0..1) ao longo da rampa: reto, ou arco de círculo no quarter pipe. */
 export function rampProfile(r: Pick<Ramp, 'quarter'>, u: number): number {
-  if (!r.quarter) return u;
-  const s = quarterSin;
-  return (1 - Math.sqrt(1 - (u * s) ** 2)) / (1 - Math.sqrt(1 - s * s));
+  return r.quarter ? quarterCurve(u, quarterSin) : u;
+}
+
+/** Arco de círculo normalizado (0..1) que termina com inclinação de asin(`maxSin`). */
+export function quarterCurve(u: number, maxSin: number): number {
+  return (1 - Math.sqrt(1 - (u * maxSin) ** 2)) / (1 - Math.sqrt(1 - maxSin * maxSin));
 }
 
 function toAabb(b: WorldSolid): Aabb {

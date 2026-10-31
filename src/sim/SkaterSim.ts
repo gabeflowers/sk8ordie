@@ -6,7 +6,7 @@ import { EPSILON, forwardFromYaw, headingOf, horizontalSpeed, wrapAngle } from '
 import { Score, type TrickAward } from './score';
 import { resolveGrab, type GrabId, type PopIntent, type TrickId } from './tricks/gesture';
 import type { GrindRail, GrindType, GrindVariant, InputState, SkaterState } from './types';
-import type { World } from './World';
+import type { Ramp, World } from './World';
 
 function turnAxis(input: InputState): number {
   return (input.left ? 1 : 0) - (input.right ? 1 : 0);
@@ -83,7 +83,8 @@ export class SkaterSim {
   private lastTilt = 0;
   private lastSide = 0;
   /** rodando na transição de um quarter pipe (subindo) */
-  private onQuarter = false;
+  /** quarter pipe em que está subindo (null fora da transição ou descendo) */
+  private quarter: Ramp | null = null;
   private airVert = false;
   private readonly probe = new Vector3();
 
@@ -259,20 +260,21 @@ export class SkaterSim {
 
     const footY = this.position.y;
     const groundY = this.world.groundHeightAt(this.position.x, this.position.z, footY + c.stepTolerance);
-    if (groundY < footY - c.stepTolerance) {
+    // descendo rampa, o chão cai até slope × passo a cada frame: continua colado nela
+    const descent = this.groundSlope < 0 ? -this.groundSlope * this.speed * dt * c.rampStickFactor : 0;
+    if (groundY < footY - c.stepTolerance - descent) {
       // o chão sumiu: saiu de uma borda (ou passou pelo lip da rampa e é lançado)
       this.state = 'AIRBORNE';
-      const vert = this.onQuarter;
+      const vert = this.quarter !== null;
       if (vert) {
         // saiu pelo coping: air quase vertical, que volta para a transição
         this.velocity.y = Math.max(0, this.speed * this.groundSlope);
-        this.velocity.x *= c.vertCarry;
-        this.velocity.z *= c.vertCarry;
+        this.launchVert();
       } else {
         this.velocity.y = Math.max(0, this.speed * this.groundSlope * c.rampLaunch);
       }
       this.groundSlope = 0;
-      this.onQuarter = false;
+      this.quarter = null;
       this.coyoteTimer = c.coyoteTime;
       this.endManual(true);
       this.endPowerslide(false);
@@ -281,7 +283,7 @@ export class SkaterSim {
     } else {
       this.position.y = groundY;
       this.groundSlope = this.measureSlope();
-      this.onQuarter = this.groundSlope > c.rollbackSlope && this.world.quarterAt(this.position.x, this.position.z) !== null;
+      this.quarter = this.groundSlope > c.rollbackSlope ? this.world.quarterAt(this.position.x, this.position.z) : null;
     }
   }
 
@@ -379,23 +381,37 @@ export class SkaterSim {
     }
   }
 
+  /**
+   * Air de quarter pipe: sobe quase reto. A componente para fora do lip vira uma leve volta para
+   * dentro (pousa de novo na transição); a lateral sobra em parte.
+   */
+  private launchVert(): void {
+    const r = this.quarter;
+    if (!r) return;
+    const c = this.cfg;
+    if (r.axis === 'x') {
+      this.velocity.x = -r.sign * c.vertReturn;
+      this.velocity.z *= c.vertCarry;
+    } else {
+      this.velocity.z = -r.sign * c.vertReturn;
+      this.velocity.x *= c.vertCarry;
+    }
+  }
+
   private ollie(): void {
     const t = this.cfg.tricks;
     const pop = this.pendingPop;
     this.pendingPop = null;
     // agachar mais = pop mais alto (sem dados de pop, altura máxima)
     // na rampa, a subida soma ao pop
-    const vert = this.state === 'GROUNDED' && this.onQuarter;
+    const vert = this.state === 'GROUNDED' && this.quarter !== null;
     const climb = this.state === 'GROUNDED' ? Math.max(0, this.speed * this.groundSlope) : 0;
     const rampLift = vert ? climb : climb * this.cfg.rampLaunch;
     this.velocity.y = this.cfg.ollieVelocity * MathUtils.lerp(t.minPopFactor, 1, pop ? pop.charge : 1) + rampLift;
-    if (vert) {
-      // pop na transição: sobe reto e volta para a rampa
-      this.velocity.x *= this.cfg.vertCarry;
-      this.velocity.z *= this.cfg.vertCarry;
-    }
+    // pop na transição: sobe reto e volta para a rampa
+    if (vert) this.launchVert();
     this.groundSlope = 0;
-    this.onQuarter = false;
+    this.quarter = null;
     this.state = 'AIRBORNE';
     this.jumpBufferTimer = 0;
     this.coyoteTimer = 0;

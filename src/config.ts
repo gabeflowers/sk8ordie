@@ -48,6 +48,11 @@ export interface RampDef {
 }
 
 /** Poste de luz; `armYaw` é a direção do braço da luminária (mesma convenção do yaw do skater). */
+/** Desafio: veja CONFIG.challenges. */
+export type ChallengeDef =
+  | { id: string; title: string; kind: 'trick'; target: string }
+  | { id: string; title: string; kind: 'multiplier' | 'combo' | 'line'; target: number };
+
 export interface PoleDef {
   x: number;
   z: number;
@@ -200,8 +205,12 @@ export const CONFIG = {
     maxGroundSlope: 3,
     /** parado subindo uma rampa mais íngreme que isso, rola para trás (de fakie) */
     rollbackSlope: 0.05,
-    /** saindo do quarter pipe, quanto da velocidade horizontal sobra (air quase vertical) */
+    /** saindo do quarter pipe, quanto da velocidade lateral (ao longo do coping) sobra */
     vertCarry: 0.06,
+    /** no air do quarter pipe, velocidade (m/s) de volta para dentro da transição */
+    vertReturn: 0.35,
+    /** descendo rampa, folga extra (× a queda esperada no passo) antes de soltar do chão */
+    rampStickFactor: 1.5,
     spawnX: 0,
     spawnZ: 0,
     spawnYaw: 0,
@@ -381,6 +390,30 @@ export const CONFIG = {
     minHeadingSpeed: 0.5,
   },
 
+  /**
+   * Desafios (src/sim/challenges.ts). `trick`: pousar uma manobra cujo nome contém `target`;
+   * `multiplier`: chegar a esse multiplicador numa linha; `combo`: tantas manobras numa linha;
+   * `line`: fechar uma linha com pelo menos tantos pontos.
+   */
+  challenges: {
+    storageKey: 'sk8ordie.challenges',
+    /** quantos desafios pendentes aparecem no HUD */
+    visible: 3,
+    /** quanto tempo o aviso de desafio concluído fica na tela (s) */
+    toastTime: 2.5,
+    list: [
+      { id: 'kickflip', title: 'Acerte um kickflip', kind: 'trick', target: 'Kickflip' },
+      { id: 'manual', title: 'Segure um manual', kind: 'trick', target: 'Manual' },
+      { id: 'feeble', title: 'Trilhe um feeble', kind: 'trick', target: 'Feeble' },
+      { id: 'air', title: 'Dê um air no quarter pipe', kind: 'trick', target: 'Air' },
+      { id: 'x2', title: 'Chegue a x2 numa linha', kind: 'multiplier', target: 2 },
+      { id: 'tre', title: 'Mande um 360 flip', kind: 'trick', target: '360 Flip' },
+      { id: 'combo5', title: 'Linha com 5 manobras', kind: 'combo', target: 5 },
+      { id: 'line3k', title: 'Feche uma linha de 3.000', kind: 'line', target: 3000 },
+      { id: 'line10k', title: 'Feche uma linha de 10.000', kind: 'line', target: 10000 },
+    ] as ChallengeDef[],
+  },
+
   visual: {
     maxPixelRatio: 2,
     /** mostra o grid de debug no lugar do asfalto (lil-gui) */
@@ -511,6 +544,8 @@ export const CONFIG = {
       curbWidth: 0.15,
       curbHeight: 0.2,
       curbOffset: 0.025,
+      /** fatias do arco do quarter pipe */
+      quarterSegments: 16,
     },
 
     rail: {
@@ -879,4 +914,5 @@ export type SimConfig = typeof CONFIG.sim;
 export type WorldConfig = typeof CONFIG.world;
 export type CameraConfig = typeof CONFIG.camera;
 export type VisualConfig = typeof CONFIG.visual;
+export type ChallengesConfig = typeof CONFIG.challenges;
 export type RigConfig = VisualConfig['rig'];

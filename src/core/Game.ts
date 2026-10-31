@@ -1,9 +1,11 @@
 import { Color, PCFShadowMap, Scene, WebGLRenderer } from 'three';
 import { CONFIG } from '../config';
+import { ChallengePanel } from '../render/ChallengePanel';
 import { ChaseCamera, type ChaseTarget } from '../render/ChaseCamera';
 import { Hud } from '../render/Hud';
 import { SkaterView } from '../render/SkaterView';
 import { WorldView } from '../render/WorldView';
+import { Challenges } from '../sim/challenges';
 import { worldDef } from '../sim/layout';
 import { SkaterSim } from '../sim/SkaterSim';
 import { World } from '../sim/World';
@@ -21,6 +23,8 @@ export class Game {
   private readonly skaterView: SkaterView;
   private readonly chase: ChaseCamera;
   private readonly hud: Hud;
+  private readonly challenges: Challenges;
+  private readonly challengePanel: ChallengePanel;
   private readonly stepper = new FixedStepper(CONFIG.loop);
   private lastTime: number | null = null;
 
@@ -43,6 +47,8 @@ export class Game {
     this.chase = new ChaseCamera(CONFIG.camera, CONFIG.sim);
     this.input = new Input(CONFIG.sim.tricks, window);
     this.hud = new Hud(container, v.hud);
+    this.challenges = new Challenges(CONFIG.challenges.list, this.sim.score, loadCompleted());
+    this.challengePanel = new ChallengePanel(container, CONFIG.challenges);
   }
 
   start(): void {
@@ -62,7 +68,8 @@ export class Game {
   }
 
   private readonly frame = (now: number): void => {
-    const dt = this.lastTime === null ? 0 : (now - this.lastTime) / 1000;
+    // timestamps fora de ordem (aba volta do fundo) não podem dar dt negativo
+    const dt = this.lastTime === null ? 0 : Math.max(0, (now - this.lastTime) / 1000);
     this.lastTime = now;
 
     if (this.input.consumeReset()) this.resetSkater();
@@ -72,6 +79,9 @@ export class Game {
     const frameDt = Math.min(dt, CONFIG.loop.maxFrameDt);
     this.skaterView.update(this.sim, alpha, frameDt);
     this.hud.update(this.sim.score, frameDt, this.sim.liveGrind, this.sim.manual?.balance ?? null);
+    const done = this.challenges.update(this.sim.score);
+    if (done.length > 0) saveCompleted(this.challenges.completed);
+    this.challengePanel.update(this.challenges, done, frameDt);
     this.chase.update(frameDt, this.chaseTarget());
     this.worldView.update(this.skaterView.renderPosition, this.chase.camera);
     this.renderer.render(this.scene, this.chase.camera);
@@ -100,4 +110,21 @@ export class Game {
     // ao voltar de aba inativa, recomeça a contagem de tempo do zero
     this.lastTime = null;
   };
+}
+
+function loadCompleted(): string[] {
+  try {
+    const raw: unknown = JSON.parse(window.localStorage.getItem(CONFIG.challenges.storageKey) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCompleted(ids: Iterable<string>): void {
+  try {
+    window.localStorage.setItem(CONFIG.challenges.storageKey, JSON.stringify([...ids]));
+  } catch {
+    // sem armazenamento: o progresso vale só nesta sessão
+  }
 }
